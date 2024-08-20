@@ -3,8 +3,11 @@
     "gh-pages": "^6.1.1"
   },
   "homepage": "https://jonters.github.io/",
-  "scripts":{
+  "scripts": {
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build" 
-  }   
+    "deploy": "gh-pages -d build"
+  },
+  "dependencies": {
+    "react-dom": "^18.3.1"
+  }
 }
