@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linear Equation Solving Practice</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #333;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+
+        h1 {
+            color: #4a5568;
+            margin-bottom: 2rem;
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .timer {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #e53e3e;
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background: #fed7d7;
+            border-radius: 10px;
+        }
+
+        .score {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            color: #4a5568;
+        }
+
+        .equation {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 2rem 0;
+            color: #2d3748;
+            padding: 1.5rem;
+            background: #f7fafc;
+            border-radius: 10px;
+            border-left: 5px solid #667eea;
+        }
+
+        .input-section {
+            margin: 2rem 0;
+        }
+
+        input[type="text"] {
+            font-size: 1.5rem;
+            padding: 1rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            width: 200px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            font-size: 1.1rem;
+            border-radius: 10px;
+            cursor: pointer;
+            margin: 0.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        }
+
+        .btn:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .feedback {
+            margin: 1rem 0;
+            padding: 1rem;
+            border-radius: 10px;
+            font-weight: bold;
+        }
+
+        .correct {
+            background: #c6f6d5;
+            color: #22543d;
+            border-left: 5px solid #38a169;
+        }
+
+        .incorrect {
+            background: #fed7d7;
+            color: #742a2a;
+            border-left: 5px solid #e53e3e;
+        }
+
+        .summary {
+            text-align: left;
+            margin-top: 2rem;
+        }
+
+        .summary h3 {
+            color: #4a5568;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .problem-review {
+            margin: 1rem 0;
+            padding: 1rem;
+            background: #f7fafc;
+            border-radius: 8px;
+        }
+
+        .problem-review.correct {
+            border-left: 4px solid #38a169;
+        }
+
+        .problem-review.incorrect {
+            border-left: 4px solid #e53e3e;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .start-screen {
+            text-align: center;
+        }
+
+        .instructions {
+            background: #edf2f7;
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin: 2rem 0;
+            text-align: left;
+        }
+
+        .instructions h3 {
+            color: #4a5568;
+            margin-bottom: 1rem;
+        }
+
+        .instructions ul {
+            margin-left: 1.5rem;
+        }
+
+        .instructions li {
+            margin: 0.5rem 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Linear Equation Practice</h1>
+        
+        <!-- Start Screen -->
+        <div id="startScreen" class="start-screen">
+            <div class="instructions">
+                <h3>Instructions:</h3>
+                <ul>
+                    <li>Solve linear equations in 60 seconds</li>
+                    <li>Enter answers as integers or fractions (e.g., 3, 5/2, -7/3)</li>
+                    <li>Press Enter or click Submit to answer</li>
+                    <li>Get detailed feedback after time runs out</li>
+                </ul>
+            </div>
+            <button class="btn" onclick="startGame()">Start Practice</button>
+        </div>
+
+        <!-- Game Screen -->
+        <div id="gameScreen" class="hidden">
+            <div class="timer" id="timer">60</div>
+            <div class="score">
+                Correct: <span id="correct">0</span> | 
+                Incorrect: <span id="incorrect">0</span> | 
+                Total: <span id="total">0</span>
+            </div>
+            
+            <div class="equation" id="equation"></div>
+            
+            <div class="input-section">
+                <input type="text" id="answer" placeholder="x = ?" autocomplete="off">
+                <br><br>
+                <button class="btn" onclick="submitAnswer()">Submit Answer</button>
+            </div>
+            
+            <div id="feedback" class="feedback hidden"></div>
+        </div>
+
+        <!-- Results Screen -->
+        <div id="resultsScreen" class="hidden">
+            <h2>Time's Up!</h2>
+            <div class="score">
+                Final Score: <span id="finalCorrect">0</span> correct out of <span id="finalTotal">0</span>
+                (<span id="percentage">0</span>%)
+            </div>
+            
+            <div class="summary" id="summary"></div>
+            
+            <button class="btn" onclick="restartGame()">Try Again</button>
+        </div>
+    </div>
+
+    <script>
+        let timeLeft = 60;
+        let correctAnswers = 0;
+        let incorrectAnswers = 0;
+        let totalProblems = 0;
+        let currentAnswer = 0;
+        let problems = [];
+        let gameTimer;
+        let isGameActive = false;
+
+        // Problem generation functions
+        function generateProblem() {
+            const types = [
+                () => generateSimpleLinear(),
+                () => generateVariableOnBothSides(),
+                () => generateWithFractions(),
+                () => generateWithNegatives(),
+                () => generateDistributive()
+            ];
+            
+            const randomType = types[Math.floor(Math.random() * types.length)];
+            return randomType();
+        }
+
+        function generateSimpleLinear() {
+            const a = getRandomInt(-10, 10, [0, 1]);
+            const b = getRandomInt(-20, 20, [0]);
+            const c = getRandomInt(-20, 20);
+            
+            // ax + b = c
+            const answer = (c - b) / a;
+            const equation = `${formatCoeff(a)}x ${formatConstant(b)} = ${c}`;
+            
+            return { equation, answer };
+        }
+
+        function generateVariableOnBothSides() {
+            const a1 = getRandomInt(-8, 8, [0]);
+            const b1 = getRandomInt(-15, 15);
+            const a2 = getRandomInt(-8, 8, [0, a1]); // Ensure a1 ≠ a2 to avoid division by zero
+            const b2 = getRandomInt(-15, 15);
+            
+            // a1*x + b1 = a2*x + b2
+            // (a1 - a2)x = b2 - b1
+            // x = (b2 - b1) / (a1 - a2)
+            const answer = (b2 - b1) / (a1 - a2);
+            
+            const left = `${formatCoeff(a1)}x ${formatConstant(b1)}`;
+            const right = `${formatCoeff(a2)}x ${formatConstant(b2)}`;
+            const equation = `${left} = ${right}`;
+            
+            return { equation, answer };
+        }
+
+        function generateWithFractions() {
+            const num = getRandomInt(-10, 10, [0]);
+            const den = getRandomInt(2, 6);
+            const b = getRandomInt(-10, 10);
+            const c = getRandomInt(-15, 15);
+            
+            // (num/den)x + b = c
+            // Solve: (num/den)x = c - b
+            // x = (c - b) * den / num
+            const answer = (c - b) * den / num;
+            
+            // Format the fraction coefficient properly
+            let coeffStr;
+            if (num === den) {
+                coeffStr = '';
+            } else if (num === -den) {
+                coeffStr = '-';
+            } else {
+                coeffStr = `(${num}/${den})`;
+            }
+            
+            const equation = `${coeffStr}x ${formatConstant(b)} = ${c}`;
+            
+            return { equation, answer };
+        }
+
+        function generateWithNegatives() {
+            const a = getRandomInt(-8, -2);
+            const b = getRandomInt(-15, 15);
+            const c = getRandomInt(-20, 20);
+            
+            const answer = (c - b) / a;
+            const equation = `${formatCoeff(a)}x ${formatConstant(b)} = ${c}`;
+            
+            return { equation, answer };
+        }
+
+        function generateDistributive() {
+            const a = getRandomInt(-5, 5, [0, 1, -1]);
+            const b = getRandomInt(-8, 8, [0]);
+            const c = getRandomInt(-5, 5, [0, a]); // Ensure a ≠ c to avoid division by zero
+            const d = getRandomInt(-15, 15);
+            
+            // a(x + b) = c*x + d
+            // ax + ab = cx + d
+            // (a-c)x = d - ab
+            const answer = (d - a * b) / (a - c);
+            
+            // Format the equation properly
+            let leftSide;
+            if (a === 1) {
+                leftSide = `(x ${formatConstant(b)})`;
+            } else if (a === -1) {
+                leftSide = `-(x ${formatConstant(b)})`;
+            } else {
+                leftSide = `${a}(x ${formatConstant(b)})`;
+            }
+            
+            const rightSide = `${formatCoeff(c)}x ${formatConstant(d)}`;
+            const equation = `${leftSide} = ${rightSide}`;
+            
+            return { equation, answer };
+        }
+
+        // Helper functions
+        function getRandomInt(min, max, exclude = []) {
+            let num;
+            do {
+                num = Math.floor(Math.random() * (max - min + 1)) + min;
+            } while (exclude.includes(num));
+            return num;
+        }
+
+        function formatCoeff(coeff) {
+            if (coeff === 1) return '';
+            if (coeff === -1) return '-';
+            return coeff.toString();
+        }
+
+        function formatConstant(constant) {
+            if (constant === 0) return '';
+            return constant > 0 ? ` + ${constant}` : ` - ${Math.abs(constant)}`;
+        }
+
+        function formatFraction(num, den) {
+            if (den === 1) return formatCoeff(num);
+            if (num === den) return '';
+            if (num === -den) return '-';
+            return `(${num}/${den})`;
+        }
+
+        // Answer parsing and evaluation
+        function parseAnswer(input) {
+            input = input.trim().replace(/\s+/g, '');
+            
+            // Handle fractions
+            const fractionMatch = input.match(/^(-?\d+)\/(-?\d+)$/);
+            if (fractionMatch) {
+                const num = parseInt(fractionMatch[1]);
+                const den = parseInt(fractionMatch[2]);
+                if (den === 0) return NaN;
+                return num / den;
+            }
+            
+            // Handle integers
+            const intMatch = input.match(/^-?\d+$/);
+            if (intMatch) {
+                return parseInt(input);
+            }
+            
+            // Handle decimals
+            const decimalMatch = input.match(/^-?\d*\.\d+$/);
+            if (decimalMatch) {
+                return parseFloat(input);
+            }
+            
+            return NaN;
+        }
+
+        function isAnswerCorrect(userAnswer, correctAnswer) {
+            if (isNaN(userAnswer) || isNaN(correctAnswer)) return false;
+            return Math.abs(userAnswer - correctAnswer) < 0.01;
+        }
+
+        // Game functions
+        function startGame() {
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('gameScreen').classList.remove('hidden');
+            
+            isGameActive = true;
+            timeLeft = 60;
+            correctAnswers = 0;
+            incorrectAnswers = 0;
+            totalProblems = 0;
+            problems = [];
+            
+            updateScore();
+            generateNewProblem();
+            startTimer();
+            
+            document.getElementById('answer').focus();
+        }
+
+        function startTimer() {
+            gameTimer = setInterval(() => {
+                timeLeft--;
+                document.getElementById('timer').textContent = timeLeft;
+                
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function generateNewProblem() {
+            if (!isGameActive) return;
+            
+            const problem = generateProblem();
+            currentAnswer = problem.answer;
+            document.getElementById('equation').textContent = problem.equation;
+            document.getElementById('answer').value = '';
+            document.getElementById('feedback').classList.add('hidden');
+            document.getElementById('answer').focus();
+        }
+
+        function submitAnswer() {
+            if (!isGameActive) return;
+            
+            const userInput = document.getElementById('answer').value;
+            const userAnswer = parseAnswer(userInput);
+            const isCorrect = isAnswerCorrect(userAnswer, currentAnswer);
+            
+            totalProblems++;
+            
+            const problemData = {
+                equation: document.getElementById('equation').textContent,
+                correctAnswer: currentAnswer,
+                userAnswer: userInput,
+                userNumericAnswer: userAnswer,
+                isCorrect: isCorrect
+            };
+            
+            problems.push(problemData);
+            
+            if (isCorrect) {
+                correctAnswers++;
+                showFeedback('Correct!', 'correct');
+            } else {
+                incorrectAnswers++;
+                const correctFormatted = formatAnswerForDisplay(currentAnswer);
+                showFeedback(`Incorrect. The answer is x = ${correctFormatted}`, 'incorrect');
+            }
+            
+            updateScore();
+            
+            setTimeout(() => {
+                generateNewProblem();
+            }, 1500);
+        }
+
+        function formatAnswerForDisplay(answer) {
+            // Try to display as a simple fraction if possible
+            const tolerance = 0.0001;
+            for (let den = 1; den <= 20; den++) {
+                const num = Math.round(answer * den);
+                if (Math.abs(answer - num/den) < tolerance) {
+                    if (den === 1) return num.toString();
+                    return `${num}/${den}`;
+                }
+            }
+            return answer.toFixed(3);
+        }
+
+        function showFeedback(message, type) {
+            const feedback = document.getElementById('feedback');
+            feedback.textContent = message;
+            feedback.className = `feedback ${type}`;
+            feedback.classList.remove('hidden');
+        }
+
+        function updateScore() {
+            document.getElementById('correct').textContent = correctAnswers;
+            document.getElementById('incorrect').textContent = incorrectAnswers;
+            document.getElementById('total').textContent = totalProblems;
+        }
+
+        function endGame() {
+            isGameActive = false;
+            clearInterval(gameTimer);
+            
+            document.getElementById('gameScreen').classList.add('hidden');
+            document.getElementById('resultsScreen').classList.remove('hidden');
+            
+            const percentage = totalProblems > 0 ? Math.round((correctAnswers / totalProblems) * 100) : 0;
+            
+            document.getElementById('finalCorrect').textContent = correctAnswers;
+            document.getElementById('finalTotal').textContent = totalProblems;
+            document.getElementById('percentage').textContent = percentage;
+            
+            displaySummary();
+        }
+
+        function displaySummary() {
+            const summary = document.getElementById('summary');
+            let html = '<h3>Problem Review:</h3>';
+            
+            problems.forEach((problem, index) => {
+                const correctFormatted = formatAnswerForDisplay(problem.correctAnswer);
+                const statusClass = problem.isCorrect ? 'correct' : 'incorrect';
+                const statusText = problem.isCorrect ? '✓' : '✗';
+                
+                html += `
+                    <div class="problem-review ${statusClass}">
+                        <strong>${statusText} Problem ${index + 1}:</strong> ${problem.equation}<br>
+                        <strong>Your answer:</strong> ${problem.userAnswer || '(no answer)'}<br>
+                        <strong>Correct answer:</strong> x = ${correctFormatted}
+                    </div>
+                `;
+            });
+            
+            summary.innerHTML = html;
+        }
+
+        function restartGame() {
+            document.getElementById('resultsScreen').classList.add('hidden');
+            document.getElementById('startScreen').classList.remove('hidden');
+        }
+
+        // Event listeners
+        document.getElementById('answer').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                submitAnswer();
+            }
+        });
+
+        // Prevent form submission
+        document.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && e.target.tagName !== 'INPUT') {
+                e.preventDefault();
+            }
+        });
+    </script>
+</body>
+</html>
