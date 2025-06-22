@@ -185,7 +185,7 @@
         <div id="startScreen">
             <div class="timer-section">
                 <div class="timer">60:00</div>
-                <p>Factor as many quadratics as you can in 60 seconds!</p>
+                <p>Find the solutions and enter them comma-separated!</p>
                 <button class="start-btn" onclick="startGame()">Start Challenge</button>
             </div>
         </div>
@@ -213,7 +213,7 @@
 
             <div class="problem-section">
                 <div class="problem" id="problemDisplay"></div>
-                <input type="text" class="answer-input" id="answerInput" placeholder="Enter factored form: (x + a)(x + b)" />
+                <input type="text" class="answer-input" id="answerInput" placeholder="Enter solutions: e.g. -3, 2 or 2, -3" />
                 <button class="next-btn" onclick="checkAnswer()">Submit Answer</button>
                 <div id="feedback" class="feedback hidden"></div>
             </div>
@@ -286,27 +286,21 @@
         }
 
         function parseAnswer(answer) {
-            // Remove spaces and convert to lowercase
-            answer = answer.replace(/\s+/g, '').toLowerCase();
+            // Remove all spaces and split by comma
+            const cleaned = answer.replace(/\s+/g, '');
+            const parts = cleaned.split(',');
             
-            // Try to match patterns like (x+a)(x+b) or (x-a)(x-b)
-            const patterns = [
-                /\(x([+-]\d+)\)\(x([+-]\d+)\)/,
-                /\(x([+-]\d+)\)\*\(x([+-]\d+)\)/,
-                /\(\d*x([+-]\d+)\)\(x([+-]\d+)\)/,
-                /\(x([+-]\d+)\)\(\d*x([+-]\d+)\)/
-            ];
+            // Should have exactly 2 parts
+            if (parts.length !== 2) return null;
             
-            for (let pattern of patterns) {
-                const match = answer.match(pattern);
-                if (match) {
-                    const factor1 = parseInt(match[1]);
-                    const factor2 = parseInt(match[2]);
-                    return [factor1, factor2];
-                }
-            }
+            // Try to parse both as numbers
+            const num1 = parseFloat(parts[0]);
+            const num2 = parseFloat(parts[1]);
             
-            return null;
+            // Check if both are valid numbers
+            if (isNaN(num1) || isNaN(num2)) return null;
+            
+            return [num1, num2];
         }
 
         function checkAnswer() {
@@ -324,8 +318,8 @@
             
             const parsed = parseAnswer(userAnswer);
             const correct = parsed && 
-                ((parsed[0] === currentProblem.p && parsed[1] === currentProblem.q) ||
-                 (parsed[0] === currentProblem.q && parsed[1] === currentProblem.p));
+                ((parsed[0] === -currentProblem.p && parsed[1] === -currentProblem.q) ||
+                 (parsed[0] === -currentProblem.q && parsed[1] === -currentProblem.p));
             
             totalProblems++;
             
@@ -334,8 +328,8 @@
                 feedback.textContent = "✅ Correct!";
                 feedback.className = "feedback correct";
             } else {
-                const correctAnswer = formatFactoredForm(currentProblem.p, currentProblem.q);
-                feedback.textContent = `❌ Incorrect. Answer: ${correctAnswer}`;
+                const correctAnswer = `${-currentProblem.p}, ${-currentProblem.q}`;
+                feedback.textContent = `❌ Incorrect. Solutions: ${correctAnswer}`;
                 feedback.className = "feedback incorrect";
             }
             
@@ -344,7 +338,7 @@
             
             setTimeout(() => {
                 displayProblem();
-            }, 2000);
+            }, 500);
         }
 
         function formatFactoredForm(p, q) {
