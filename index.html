@@ -3,15 +3,426 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>test</title>
+    <title>Quadratic Factoring Practice</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #333;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .container:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+        }
+
+        h1 {
+            color: #4a5568;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .timer-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            border-radius: 15px;
+            color: white;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+            100% { transform: scale(1); }
+        }
+
+        .timer {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .start-btn, .next-btn, .restart-btn {
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 10px;
+        }
+
+        .start-btn:hover, .next-btn:hover, .restart-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+        }
+
+        .problem-section {
+            margin: 30px 0;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 15px;
+            border-left: 5px solid #667eea;
+        }
+
+        .problem {
+            font-size: 1.8em;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #2d3748;
+        }
+
+        .answer-input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 1.2em;
+            text-align: center;
+            transition: all 0.3s ease;
+            margin-bottom: 15px;
+        }
+
+        .answer-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .feedback {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .correct {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .incorrect {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .score-section {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+            padding: 20px;
+            background: linear-gradient(45deg, #ffecd2, #fcb69f);
+            border-radius: 15px;
+        }
+
+        .score-item {
+            text-align: center;
+        }
+
+        .score-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #8b4513;
+        }
+
+        .score-label {
+            color: #6b4423;
+            font-weight: bold;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .game-over {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin: 20px 0;
+        }
+
+        .final-score {
+            font-size: 2.5em;
+            margin: 20px 0;
+        }
+    </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div class="container">
+        <h1>⚡ Quadratic Factoring Challenge</h1>
+        
+        <div id="startScreen">
+            <div class="timer-section">
+                <div class="timer">60:00</div>
+                <p>Factor as many quadratics as you can in 60 seconds!</p>
+                <button class="start-btn" onclick="startGame()">Start Challenge</button>
+            </div>
+        </div>
 
-    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+        <div id="gameScreen" class="hidden">
+            <div class="timer-section">
+                <div class="timer" id="timerDisplay">60</div>
+                <p>Time Remaining</p>
+            </div>
 
-    <script type="text/babel" src="index.js"></script>
+            <div class="score-section">
+                <div class="score-item">
+                    <div class="score-number" id="correctCount">0</div>
+                    <div class="score-label">Correct</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-number" id="totalCount">0</div>
+                    <div class="score-label">Total</div>
+                </div>
+                <div class="score-item">
+                    <div class="score-number" id="accuracy">0%</div>
+                    <div class="score-label">Accuracy</div>
+                </div>
+            </div>
+
+            <div class="problem-section">
+                <div class="problem" id="problemDisplay"></div>
+                <input type="text" class="answer-input" id="answerInput" placeholder="Enter factored form: (x + a)(x + b)" />
+                <button class="next-btn" onclick="checkAnswer()">Submit Answer</button>
+                <div id="feedback" class="feedback hidden"></div>
+            </div>
+        </div>
+
+        <div id="gameOverScreen" class="hidden">
+            <div class="game-over">
+                <h2>🎉 Challenge Complete!</h2>
+                <div class="final-score" id="finalScore"></div>
+                <p id="finalMessage"></p>
+                <button class="restart-btn" onclick="resetGame()">Try Again</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentProblem = {};
+        let correctAnswers = 0;
+        let totalProblems = 0;
+        let timeLeft = 60;
+        let gameTimer = null;
+        let gameActive = false;
+
+        // Generate random quadratic problems
+        function generateProblem() {
+            // Generate factors (a + p)(a + q) = a² + (p+q)a + pq
+            const p = Math.floor(Math.random() * 21) - 10; // -10 to 10
+            const q = Math.floor(Math.random() * 21) - 10; // -10 to 10
+            
+            // Avoid cases where p or q is 0 for more interesting problems
+            if (p === 0 || q === 0) return generateProblem();
+            
+            const b = p + q; // coefficient of x
+            const c = p * q; // constant term
+            
+            currentProblem = {
+                b: b,
+                c: c,
+                p: p,
+                q: q,
+                display: formatQuadratic(1, b, c)
+            };
+            
+            return currentProblem;
+        }
+
+        function formatQuadratic(a, b, c) {
+            let result = "x²";
+            
+            if (b > 0) {
+                result += " + " + b + "x";
+            } else if (b < 0) {
+                result += " - " + Math.abs(b) + "x";
+            }
+            
+            if (c > 0) {
+                result += " + " + c;
+            } else if (c < 0) {
+                result += " - " + Math.abs(c);
+            }
+            
+            return result;
+        }
+
+        function displayProblem() {
+            const problem = generateProblem();
+            document.getElementById('problemDisplay').textContent = `Factor: ${problem.display}`;
+            document.getElementById('answerInput').value = '';
+            document.getElementById('feedback').classList.add('hidden');
+        }
+
+        function parseAnswer(answer) {
+            // Remove spaces and convert to lowercase
+            answer = answer.replace(/\s+/g, '').toLowerCase();
+            
+            // Try to match patterns like (x+a)(x+b) or (x-a)(x-b)
+            const patterns = [
+                /\(x([+-]\d+)\)\(x([+-]\d+)\)/,
+                /\(x([+-]\d+)\)\*\(x([+-]\d+)\)/,
+                /\(\d*x([+-]\d+)\)\(x([+-]\d+)\)/,
+                /\(x([+-]\d+)\)\(\d*x([+-]\d+)\)/
+            ];
+            
+            for (let pattern of patterns) {
+                const match = answer.match(pattern);
+                if (match) {
+                    const factor1 = parseInt(match[1]);
+                    const factor2 = parseInt(match[2]);
+                    return [factor1, factor2];
+                }
+            }
+            
+            return null;
+        }
+
+        function checkAnswer() {
+            if (!gameActive) return;
+            
+            const userAnswer = document.getElementById('answerInput').value.trim();
+            const feedback = document.getElementById('feedback');
+            
+            if (!userAnswer) {
+                feedback.textContent = "Please enter an answer!";
+                feedback.className = "feedback incorrect";
+                feedback.classList.remove('hidden');
+                return;
+            }
+            
+            const parsed = parseAnswer(userAnswer);
+            const correct = parsed && 
+                ((parsed[0] === currentProblem.p && parsed[1] === currentProblem.q) ||
+                 (parsed[0] === currentProblem.q && parsed[1] === currentProblem.p));
+            
+            totalProblems++;
+            
+            if (correct) {
+                correctAnswers++;
+                feedback.textContent = "✅ Correct!";
+                feedback.className = "feedback correct";
+            } else {
+                const correctAnswer = formatFactoredForm(currentProblem.p, currentProblem.q);
+                feedback.textContent = `❌ Incorrect. Answer: ${correctAnswer}`;
+                feedback.className = "feedback incorrect";
+            }
+            
+            feedback.classList.remove('hidden');
+            updateScore();
+            
+            setTimeout(() => {
+                displayProblem();
+            }, 2000);
+        }
+
+        function formatFactoredForm(p, q) {
+            const formatTerm = (n) => n >= 0 ? `+ ${n}` : `- ${Math.abs(n)}`;
+            return `(x ${formatTerm(p)})(x ${formatTerm(q)})`;
+        }
+
+        function updateScore() {
+            document.getElementById('correctCount').textContent = correctAnswers;
+            document.getElementById('totalCount').textContent = totalProblems;
+            const accuracy = totalProblems > 0 ? Math.round((correctAnswers / totalProblems) * 100) : 0;
+            document.getElementById('accuracy').textContent = accuracy + '%';
+        }
+
+        function startGame() {
+            gameActive = true;
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('gameScreen').classList.remove('hidden');
+            
+            displayProblem();
+            
+            gameTimer = setInterval(() => {
+                timeLeft--;
+                document.getElementById('timerDisplay').textContent = timeLeft;
+                
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+            
+            // Focus on input
+            document.getElementById('answerInput').focus();
+        }
+
+        function endGame() {
+            gameActive = false;
+            clearInterval(gameTimer);
+            
+            document.getElementById('gameScreen').classList.add('hidden');
+            document.getElementById('gameOverScreen').classList.remove('hidden');
+            
+            const accuracy = totalProblems > 0 ? Math.round((correctAnswers / totalProblems) * 100) : 0;
+            document.getElementById('finalScore').textContent = `${correctAnswers}/${totalProblems} (${accuracy}%)`;
+            
+            let message = "";
+            if (accuracy >= 90) {
+                message = "🏆 Outstanding! You're a factoring master!";
+            } else if (accuracy >= 75) {
+                message = "🎯 Great job! You're getting really good at this!";
+            } else if (accuracy >= 50) {
+                message = "👍 Good work! Keep practicing to improve!";
+            } else {
+                message = "💪 Keep practicing! You'll get better with time!";
+            }
+            
+            document.getElementById('finalMessage').textContent = message;
+        }
+
+        function resetGame() {
+            correctAnswers = 0;
+            totalProblems = 0;
+            timeLeft = 60;
+            gameActive = false;
+            
+            document.getElementById('gameOverScreen').classList.add('hidden');
+            document.getElementById('startScreen').classList.remove('hidden');
+            
+            updateScore();
+        }
+
+        // Allow Enter key to submit answer
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('answerInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    checkAnswer();
+                }
+            });
+        });
+    </script>
 </body>
 </html>
