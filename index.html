@@ -58,7 +58,49 @@
     </div>
   </section>
 
-  <div id="veil"><div class="t">Johnny Liu</div><div class="s">Charting…</div></div>
+  <div id="veil" role="status" aria-live="polite">
+    <canvas id="veil-stars" aria-hidden="true"></canvas>
+    <svg class="orrery" viewBox="-200 -200 400 400" aria-hidden="true">
+      <g class="r r1"><ellipse rx="190" ry="72"/><circle cx="190" cy="0" r="3.2"/></g>
+      <g class="r r2"><ellipse rx="150" ry="58"/><circle cx="-150" cy="0" r="2.6"/></g>
+      <g class="r r3"><ellipse rx="108" ry="150"/><circle cx="0" cy="150" r="2.2"/></g>
+      <circle class="track" r="196" pathLength="100"/><circle class="prog" r="196" pathLength="100"/>
+    </svg>
+    <h1 class="vt" aria-label="Johnny's website"><span class="l1">Johnny&rsquo;s</span><span class="l2">Website</span></h1>
+    <div class="vs"><span id="veil-pct">00</span><i></i><span id="veil-step">Waking up</span></div>
+  </div>
+  <script>
+  // Loading screen: runs before the 3D modules arrive. A slow star-field drift on a 2D canvas, a progress ring fed
+  // by main.js through window.__veil(fraction, label), and a burst of speed when the scene opens.
+  (function () {
+    var v = document.getElementById('veil'), c = document.getElementById('veil-stars'), x = c.getContext('2d');
+    var pct = document.getElementById('veil-pct'), step = document.getElementById('veil-step'), prog = v.querySelector('.prog');
+    var W, H, D, stars = [], shown = 0, goal = 0.04, speed = 1, t0 = performance.now(); window.__veilStart = t0;
+    function size() { D = Math.min(window.devicePixelRatio || 1, 2); W = c.width = innerWidth * D; H = c.height = innerHeight * D; }
+    size(); addEventListener('resize', size);
+    for (var i = 0; i < 260; i++) stars.push({ a: Math.random() * 6.283, r: Math.pow(Math.random(), 0.6), z: Math.random(), h: [226, 262, 320, 190, 40][i % 5] });
+    window.__veil = function (p, label) { goal = Math.max(goal, p); if (label) step.textContent = label; };
+    var still = matchMedia('(prefers-reduced-motion: reduce)').matches, last = t0;
+    function tick(now) {
+      var dt = Math.min(0.05, (now - last) / 1000); last = now;
+      var open = !document.body.classList.contains('booting');
+      shown += (goal - shown) * Math.min(1, dt * 5); speed += ((open ? 26 : 1 + goal * 1.5) - speed) * Math.min(1, dt * 3);
+      pct.textContent = String(Math.round(shown * 100)).padStart(2, '0'); prog.style.strokeDashoffset = 100 - shown * 100;
+      x.globalCompositeOperation = 'source-over'; x.fillStyle = 'rgba(1,2,8,' + (open ? 0.22 : 0.42) + ')'; x.fillRect(0, 0, W, H);
+      x.globalCompositeOperation = 'lighter';
+      var R = Math.hypot(W, H) / 2;
+      for (var i = 0; i < stars.length; i++) {
+        var s = stars[i]; if (!still) s.z += dt * 0.035 * speed; if (s.z > 1) { s.z -= 1; s.a = Math.random() * 6.283; }
+        var k = s.z * s.z, d = (0.04 + s.r * 0.96) * R * (0.12 + k * 1.3), px = W / 2 + Math.cos(s.a) * d, py = H / 2 + Math.sin(s.a) * d * 0.82;
+        var len = Math.min(140, (0.6 + k * 2.2) * D * (1 + speed * 0.9 * k)), al = Math.min(1, s.z * 3) * (0.25 + k * 0.75);
+        x.strokeStyle = 'hsla(' + s.h + ',85%,' + (70 + k * 22) + '%,' + al + ')'; x.lineWidth = (0.6 + k * 1.5) * D;
+        x.beginPath(); x.moveTo(px, py); x.lineTo(px - Math.cos(s.a) * len, py - Math.sin(s.a) * len * 0.82); x.stroke();
+      }
+      if (!open || now - (tick.openAt || (tick.openAt = now)) < 1900) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  })();
+  </script>
   <noscript><p style="color:#fff;padding:2rem;font-family:sans-serif">This site is a 3D star map and needs JavaScript. Practice tools: <a href="factoring.html">factoring</a>, <a href="linear.html">linear equations</a>.</p></noscript>
   <script type="module" src="src/main.js"></script>
 </body>

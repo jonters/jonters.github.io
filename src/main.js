@@ -21,7 +21,11 @@ const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.05, 4
 const post = createPost(renderer, scene, camera);
 const rig = new Rig(camera);
 
+const veil = (p, label) => { try { window.__veil && window.__veil(p, label); } catch (e) { /* no veil */ } };
+const paint = () => new Promise(r => requestAnimationFrame(() => r())); // let the loading screen repaint between heavy steps
+veil(0.12, 'Mapping the sky'); await paint();
 const sky = createSky(renderer); scene.add(sky.mesh);
+veil(0.3, 'Igniting stars'); await paint();
 const stars = createStars(); scene.add(stars);
 const dust = createDust(); scene.add(dust);
 
@@ -32,6 +36,7 @@ for (const n of NODES) {
   n.depth = n.parent ? (byId[n.parent].parent ? 2 : 1) : 0;
   n.clear = n.depth === 0 ? heroClear.home : n.depth === 1 ? 5.0 : heroClear.star;
 }
+let loadedBodies = 0;
 await Promise.all(NODES.map(async n => {
   let mod, opts = n.opts;
   try { mod = await import(`./bodies/${n.body}.js`); }
@@ -40,13 +45,16 @@ await Promise.all(NODES.map(async n => {
   n.holder = new THREE.Group(); n.holder.position.copy(n.p); if (n.rot) n.holder.rotation.set(...n.rot);
   n.holder.add(n.inst.group); scene.add(n.holder);
   if (n.inst.setEnvironment) n.inst.setEnvironment(sky.nebula);
+  veil(0.3 + 0.45 * (++loadedBodies / NODES.length), 'Igniting stars');
   n.pickR = Math.min(n.inst.radius || 1, n.depth === 1 ? 3.2 : 2.2);
 }));
+veil(0.78, 'Drawing constellations'); await paint();
 const linked = NODES.filter(n => n.parent);
 linked.forEach((n, i) => { n.edge = i; });
 const edges = createEdges(linked.map(n => { const p = byId[n.parent]; return { a: p.p, b: n.p, colA: p.colorC, colB: n.colorC, clearA: p.clear, clearB: n.clear }; }));
 scene.add(edges.group);
 const chart = createChart(NODES); scene.add(chart.group);
+veil(0.84, 'Scattering galaxies'); await paint();
 // ambient decor (distant galaxies, clouds, clusters, comets): optional, never interactive
 let ambient = null;
 if (q.get('ambient') !== '0') try { ambient = (await import('./ambient.js')).createAmbient({ nodes: NODES.map(n => ({ id: n.id, position: n.p.clone(), clear: n.depth === 2 ? 4 : 9, color: n.colorC })), environment: sky.nebula }); scene.add(ambient.group); } catch (e) { console.info('no ambient layer', e.message); }
@@ -55,8 +63,8 @@ if (q.get('ambient') !== '0') try { ambient = (await import('./ambient.js')).cre
 const labelsEl = $('#labels'), reticle = $('#reticle'), card = $('#card'), page = $('#page'), crumbs = $('#crumbs'), coords = $('#coords');
 NODES.forEach((n, i) => {
   const el = document.createElement('div'); el.className = 'label' + (n.depth === 2 ? ' minor' : ''); el.style.setProperty('--c', n.color);
-  el.innerHTML = `<span class="name"></span>${n.depth < 2 ? `<span class="idx">${String(i).padStart(2, '0')} · ${n.depth === 0 ? 'Johnny Liu' : n.kicker.split(' · ')[0]}</span>` : ''}`;
-  el.firstChild.textContent = n.depth === 0 ? 'Origin' : n.title; labelsEl.appendChild(el); n.label = el; n.labelA = 0;
+  el.innerHTML = `<span class="name"></span>${n.depth < 2 ? `<span class="idx">${String(i).padStart(2, '0')}</span>` : ''}`;
+  el.firstChild.textContent = n.title; labelsEl.appendChild(el); n.label = el; n.labelA = 0;
 });
 
 const state = { focus: null, hover: null, mode: 'space', time: +(q.get('t') || 0), frozen: q.has('t'), shift: new THREE.Vector2(), shiftGoal: new THREE.Vector2(), warp: 0, flash: 0, cardPending: null, cardAt: 0.8 };
@@ -73,9 +81,11 @@ function renderCrumbs() {
   if (state.focus) for (const n of path(state.focus)) { const s = document.createElement('i'); s.textContent = '/'; crumbs.appendChild(s); add(n.title, n.id); }
 }
 
+const kicker = n => { const no = String(NODES.indexOf(n)).padStart(2, '0'); return n.depth === 0 ? 'Start here' : n.depth === 1 ? `Section ${no}` : `${byId[n.parent].title} / ${no}`; };
+
 function renderCard(n) {
   card.classList.toggle('minor', n.depth === 2);
-  card.querySelector('.kicker').textContent = n.depth === 2 ? `${byId[n.parent].title} / ${n.kicker}` : n.kicker;
+  card.querySelector('.kicker').textContent = kicker(n);
   const kids = childrenOf(n.id).length, dist = n.p.length();
   const az = (Math.atan2(n.p.x, n.p.z) + 2 * Math.PI) % (2 * Math.PI) / (2 * Math.PI) * 24, dec = dist ? Math.asin(n.p.y / dist) * 180 / Math.PI : 0;
   const rows = [['Cat', `JL-${String(NODES.indexOf(n)).padStart(2, '0')}`], ['Pos', dist ? `${String(Math.floor(az)).padStart(2, '0')}h ${String(Math.floor(az % 1 * 60)).padStart(2, '0')}m  ${dec >= 0 ? '+' : '−'}${Math.abs(dec).toFixed(1)}°` : 'centre'], ['Dist', `${dist.toFixed(1)} AU`], ['Bodies', String(kids || '—')]];
@@ -140,7 +150,7 @@ function enter() {
   const dir = camera.position.clone().sub(n.p).normalize();
   rig.flyTo(n.p, n.p.clone().addScaledVector(dir, Math.max(0.12, n.pickR * 0.2)), reduced ? 0.5 : 1.35, { kind: 'dive', onDone: () => {
     if (n.href) { location.href = n.href; return; }
-    state.mode = 'page'; page.querySelector('.kicker').textContent = n.kicker; page.querySelector('h1').textContent = n.title;
+    state.mode = 'page'; page.querySelector('.kicker').textContent = kicker(n); page.querySelector('h1').textContent = n.title;
     page.hidden = false; $('#back').focus({ preventScroll: true, focusVisible: false });
   } });
 }
@@ -346,4 +356,11 @@ if (q.get('intro') === '0' || reduced) {
 }
 if (q.has('still')) rig.auto = 0;
 window.__astral = { focus, enter, leave, rig, state, NODES };
-requestAnimationFrame(now => { last = now; body.classList.remove('booting'); frame(now); });
+// Compile shaders and draw once behind the loading screen, then open it (it stays up long enough to be seen).
+veil(0.92, 'Warming up'); await paint();
+for (const n of NODES) n.inst.update(state.time, 0.016, camera);
+post.render(state.time);
+veil(1, 'Ready'); await paint();
+const held = performance.now() - (window.__veilStart || performance.now());
+if (q.get('intro') !== '0' && !reduced && held < 2400) await new Promise(r => setTimeout(r, 2400 - held));
+requestAnimationFrame(now => { last = now; body.classList.remove('booting'); body.classList.add('opened'); frame(now); });
