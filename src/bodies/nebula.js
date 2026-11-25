@@ -68,7 +68,7 @@ void main(){
   h=sqrt(h); float t0=max(-b-h,0.0), t1=-b+h; if(t1<=t0) discard;
   float L=t1-t0; float dt=L/float(${STEPS});
   float jit=hash21(gl_FragCoord.xy+fract(uSeed)*91.0);
-  float tt=uTime*0.07;
+  float tt=uTime*0.15;
   // star glow profiles along this ray (screen-space shape, composited at their depth)
   float sT[${N_STARS}]; vec3 sG[${N_STARS}];
   for(int i=0;i<${N_STARS}; i++){
@@ -126,7 +126,7 @@ uniform float uTime, uScale, uPixH, uSeed;
 varying vec3 vCol; varying float vKind;
 void main(){
   vec3 p=position;
-  float t=uTime*0.07;
+  float t=uTime*0.15;
   p+=0.20*sin(p.yzx*1.7+vec3(1.3,2.1,0.4)*t+uSeed);
   vec4 mv=modelViewMatrix*vec4(p,1.0);
   float d=-mv.z;

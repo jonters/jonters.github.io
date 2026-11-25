@@ -66,11 +66,13 @@ uniform samplerCube tNebula,tFlow; uniform float uTime,uFade,uTintAmt,uResY; uni
 void main(){
   vec3 d=normalize(vDir);
   vec3 f=(textureCube(tFlow,d).xyz-0.5)/0.9;
-  float cyc=uTime/46.0; float p0=fract(cyc), p1=fract(cyc+0.5);
-  const float amp=0.42;
+  float ph=fract(dot(f,vec3(3.1,1.7,2.3)));           // per-pixel phase: the cross-fade never lines up across the screen
+  float cyc=uTime/18.0+ph; float p0=fract(cyc), p1=fract(cyc+0.5);
+  const float amp=0.16;
   vec3 c0=textureCube(tNebula,normalize(d-f*amp*(p0-0.5))).rgb;
   vec3 c1=textureCube(tNebula,normalize(d-f*amp*(p1-0.5))).rgb;
-  vec3 col=mix(c0,c1,abs(2.0*p0-1.0));
+  float wf=abs(2.0*p0-1.0); vec3 col=mix(c0,c1,wf);
+  vec3 mean=(c0+c1)*0.5; col=max(mean+(col-mean)/sqrt(wf*wf+(1.0-wf)*(1.0-wf)),0.0); // keep contrast through the blend
   // slow breathing of the glow so it never sits still even where the flow is weak
   float breathe=1.0+0.10*sin(uTime*0.11+d.x*3.0+d.y*2.0)+0.07*sin(uTime*0.07-d.z*4.0+f.x*6.0);
   // colour-heavy toward the top of the screen, calmer toward the bottom

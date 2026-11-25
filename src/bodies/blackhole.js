@@ -1,5 +1,5 @@
 // Black hole: ray-traced Schwarzschild lensing of a thin, sheared, Doppler-beamed accretion disk.
-// create({ seed, intensity, spin, beaming, size, jets }) -> { group, radius, update(time, dt, camera) }
+// create({ seed, intensity, spin, beaming, size, glow, jets, envGain }) -> also setEnvironment(cubeTexture) -> { group, radius, update(time, dt, camera) }
 //
 // One back-face sphere (radius uRb, in Schwarzschild radii) is the ray-tracing volume: every fragment marches the
 // camera ray through it with x'' = -1.5 h^2 x / r^5 (exact photon orbits in Schwarzschild, affine parameter), picks up
@@ -11,16 +11,18 @@ import * as THREE from 'three';
 import { NOISE } from '../glsl.js';
 
 const traceVert = /* glsl */ `
-varying vec3 vObj; varying vec3 vCam;
+varying vec3 vObj; varying vec3 vCam; varying vec4 vClip;
 void main(){
   vObj=position;
   vCam=(inverse(modelMatrix)*vec4(cameraPosition,1.0)).xyz;
   gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+  vClip=gl_Position;
 }`;
 
 const traceFrag = /* glsl */ `
-uniform float uTime,uRs,uRb,uRin,uRout,uSpin,uBeam,uIntensity,uSeed,uJets;
-varying vec3 vObj; varying vec3 vCam;
+uniform float uExpo,uTime,uRs,uRb,uRin,uRout,uSpin,uBeam,uIntensity,uSeed,uGlow,uHasEnv,uEnvGain;
+uniform samplerCube uEnv; uniform mat3 uEnvRot;
+varying vec3 vObj; varying vec3 vCam; varying vec4 vClip;
 ${NOISE}
 const float BC=2.5980762; // critical impact parameter sqrt(27)/2 in units of Rs
 
@@ -70,6 +72,8 @@ float diskDensity(float r,float phi,float lod){
   d=max(d,0.0); return d*d*0.75;
 }
 
+float erfa(float x){ return tanh(1.2025*x); } // erf approximation, plenty for a glow integral
+
 void main(){
   vec3 ro=vCam/uRs; vec3 rd=normalize(vObj/uRs-ro);
   vec3 Lm=cross(ro,rd); float b=length(Lm); float h2=b*b;
@@ -82,30 +86,48 @@ void main(){
   float lod=1.0-smoothstep(0.015,0.07,pw);
   int ns=0;
   float far=smoothstep(0.02,0.12,pw); // small on screen: denser, brighter disk so it still reads
-  vec3 col=vec3(0.0); float T=1.0; float dens=0.7;
+  vec3 col=vec3(0.0); float T=1.0; float dens=0.7; bool capt=false;
   // disk angular momentum axis is -y (material moves along (-z,0,x))
   // dither the first step against slab banding, only for near-edge-on rays
   float jit=mix(1.0,hash21(gl_FragCoord.xy)*0.8+0.2,1.0-smoothstep(0.04,0.2,abs(rd.y)));
   for(int i=0;i<32;i++){
     float r2=dot(p,p); float r=sqrt(r2);
-    if(r<1.0) break;
+    if(r<1.0){ capt=true; break; }
     if(r>uRb+0.05 && dot(p,v)>0.0) break;
     float dt=max(0.07,0.17*r)*(0.6+0.4*smoothstep(1.2,4.0,abs(p.y)))*(i==0?jit:1.0);
     vec3 acc=-1.5*h2*p/(r2*r2*r);
     v+=acc*dt; vec3 pn=p+v*dt;
-    // disk slab |y|<H: portion of this segment inside it
+    float seg0=length(pn-p);
     float rm=length(0.5*(p.xz+pn.xz));
-    float H=0.045+0.014*rm;
-    float y0=p.y, y1=pn.y; float lo=0.0, hi=0.0;
-    if(abs(y1-y0)<1e-5){ if(abs(y0)<H){ lo=0.0; hi=1.0; } }
-    else { float sa=(-H-y0)/(y1-y0), sb=(H-y0)/(y1-y0); lo=max(0.0,min(sa,sb)); hi=min(1.0,max(sa,sb)); }
+    float y0=p.y, y1=pn.y, dy=y1-y0;
+    // optically thin hot corona hugging the disk: analytic integral of a gaussian in height along the segment
+    {
+      float Hg=0.12+0.03*rm;
+      float G=abs(dy)>1e-3*Hg ? 0.886227*Hg*(erfa(y1/Hg)-erfa(y0/Hg))/dy : exp(-y0*y0/(Hg*Hg));
+      G*=seg0;
+      float rad=smoothstep(uRin*0.95,uRin*1.5,rm)*(1.0-smoothstep(uRout*0.35,uRout*1.08,rm));
+      if(G*rad>1e-4){
+        vec3 mp=0.5*(p+pn);
+        vec3 tng=normalize(vec3(-mp.z,0.0,mp.x));
+        float beta=min(sqrt(0.5/max(rm-1.0,0.5)),0.7);
+        float g=inversesqrt(1.0-beta*beta)*(1.0+beta*dot(tng,normalize(v)));
+        g=mix(1.0,sqrt(max(1.0-1.0/rm,0.05))/g,uBeam);
+        float Tr=uRin/rm;
+        col+=T*bb(Tr*g*0.9)*pow(Tr,1.8)*pow(g,2.0)*G*rad*uGlow*(1.0+1.2*far);
+      }
+    }
+    // disk slab |y|<H: portion of this segment inside it
+    float H=0.05+0.02*rm;
+    float lo=0.0, hi=0.0;
+    if(abs(dy)<1e-5){ if(abs(y0)<H){ lo=0.0; hi=1.0; } }
+    else { float sa=(-H-y0)/dy, sb=(H-y0)/dy; lo=max(0.0,min(sa,sb)); hi=min(1.0,max(sa,sb)); }
     if(hi>lo){
       float sm=0.5*(lo+hi); vec3 q=mix(p,pn,sm);
       float r_=length(q.xz);
       float inner=smoothstep(uRin*0.78,uRin*1.12,r_);
       float outer=1.0-smoothstep(uRout*0.45,uRout,r_);
       float prof=exp(-2.0*q.y*q.y/(H*H));
-      float seg=length(pn-p)*(hi-lo);
+      float seg=seg0*(hi-lo);
       if(inner*outer>0.001){
         float phi=atan(q.z,q.x);
         if(ns<6) dens=mix(diskDensity(r_,phi,lod),0.9,far*0.5); ns++;
@@ -116,13 +138,13 @@ void main(){
         float gam=inversesqrt(1.0-beta*beta);
         float g=1.0/(gam*(1.0+beta*dot(tng,dir)))*sqrt(max(1.0-1.0/r_,0.05));
         g=mix(1.0,g,uBeam);
-        float Tr=pow(uRin/r_,1.0);
-        float Te=Tr*g*(0.8+0.25*dens);
-        float I=pow(Tr,2.5)*pow(g,2.3)*(0.12+dens*dens);
-        float tau=dens*inner*outer*prof*min(seg/(2.0*H),3.0)*1.1;
-        float a=1.0-exp(-tau); float ab=1.0-exp(-tau*0.8);
-        vec3 e=bb(Te)*I*inner*(0.35+0.65*outer)*0.55*(1.0+1.6*far);
-        float el=dot(e,vec3(0.3,0.5,0.2)); e*=1.3/(1.3+el*0.9);
+        float Tr=uRin/r_;
+        float Te=pow(Tr,1.3)*pow(g,0.8)*(0.74+0.2*dens);
+        float I=pow(Tr,1.9)*pow(g,2.2)*(0.3+dens)*0.9;
+        float tau=(0.35+dens)*inner*outer*prof*min(seg/(2.0*H),3.0)*1.9;
+        float a=1.0-exp(-tau); float ab=1.0-exp(-tau*0.85);
+        vec3 e=bb(Te)*I*inner*(0.3+0.7*outer)*(1.0+1.3*far);
+        float el=dot(e,vec3(0.3,0.5,0.2)); e*=2.5/(2.5+el);
         col+=T*a*e; T*=1.0-ab;
         if(T<0.01) break;
       }
@@ -136,10 +158,43 @@ void main(){
   float side=dot(normalize(Lm),vec3(0.0,1.0,0.0)); // photon L = -Lm; co-rotating (approaching) when -Lm || -y
   float rg=mix(1.0,1.0+0.55*side,uBeam);
   vec3 rc=bb(0.95*rg)*(ring*1.5+ringHalo)*rg;
-  col+=T*rc;
+  col+=T*sqrt(T)*rc; // the ring sits behind the disk: let a translucent near side dim it a little more
   float cap=smoothstep(BC+pw*0.75,BC-pw*0.75,b);
+  // from outside the photon ring the analytic edge is exact (and anti-aliased); from inside it, outgoing rays with
+  // b<BC escape, so trust the march instead
+  float r0=length(ro);
+  if(r0<BC*1.1){ float k=smoothstep(BC*0.95,BC*1.1,r0); cap=mix(capt?1.0:0.0,cap,k); }
   float alpha=1.0-T*(1.0-cap);
-  gl_FragColor=vec4(col*uIntensity,alpha);
+  col*=uIntensity*uExpo;
+  // lensed backdrop: escaping rays see the sky along their bent exit direction. Replaces the real (unbent) sky in
+  // a soft annulus around the shadow, fading to nothing well inside the tracing volume so there is no seam.
+  float wEnv=uHasEnv*(1.0-smoothstep(1.25*BC,3.0*BC,b))*(1.0-cap)*T;
+  if(wEnv>0.002 && !capt){
+    vec3 vn=normalize(v); float r=length(p);
+    // finish the bending analytically (weak field) from the last traced point out to infinity
+    float s0=dot(p,vn); vec3 perp=p-s0*vn; float lp=length(perp);
+    float dl=(1.0-s0*(2.0*s0*s0+3.0*h2)/(2.0*r*r*r))/max(b,1.0);
+    if(lp>1e-4) vn=normalize(vn-perp/lp*dl);
+    vec3 dW=normalize(uEnvRot*vn), uW=normalize(uEnvRot*rd);
+    vec3 eB=textureCube(uEnv,dW).rgb, eU=textureCube(uEnv,uW).rgb;
+    // where the exit direction swings faster than a pixel can resolve (hugging the ring), use the local sky tone
+    float dd=length(fwidth(dW));
+    eB=mix(eB,0.5*(eB+eU),smoothstep(0.01,0.06,dd))*(1.0-0.8*smoothstep(0.02,0.1,dd));
+    // lensed stars, so the star density does not dip inside the annulus
+    vec3 sp=dW*150.0; vec3 ci=floor(sp); float hs=hash31(ci+uSeed);
+    if(hs>0.93){
+      vec3 off=vec3(hash31(ci+3.1),hash31(ci+7.7),hash31(ci+11.3))-0.5;
+      vec3 f=fract(sp)-0.5-off*0.4;
+      float sw=max(dd*150.0*0.6,0.07);
+      float st=exp(-dot(f,f)/(sw*sw))*(0.07/sw)*(0.07/sw)*(1.0-smoothstep(0.03,0.1,dd));
+      eB+=st*mix(vec3(1.0,0.85,0.7),vec3(0.75,0.85,1.0),hash31(ci+5.0))*pow((hs-0.93)/0.07,3.0)*2.0;
+    }
+    float sy=clamp(0.5+0.5*vClip.y/vClip.w,0.0,1.0);
+    float scr=mix(0.34,1.42,smoothstep(0.08,0.9,sy)); // the site's sky dims toward the bottom of the screen
+    col+=wEnv*eB*scr*uEnvGain;
+    alpha=1.0-(1.0-alpha)*(1.0-wEnv);
+  }
+  gl_FragColor=vec4(col,alpha);
 }`;
 
 const occVert = /* glsl */ `
@@ -182,16 +237,18 @@ void main(){
   gl_FragColor=vec4(c*I*uJets*0.22,1.0);
 }`;
 
+const _c = new THREE.Vector3(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
 export function create(opts = {}) {
-  const o = { seed: 1, intensity: 1, spin: 5.5, beaming: 1, size: 1, jets: 1, ...opts };
+  const o = { seed: 1, intensity: 1, spin: 5.5, beaming: 1, size: 1, jets: 0, glow: 0.12, envGain: 1, ...opts };
   const group = new THREE.Group();
   const Rs = 0.34 * o.size;
   const Rb = 11.0; // tracing volume, in Rs
   const trace = new THREE.Mesh(new THREE.SphereGeometry(Rb * Rs, 64, 40), new THREE.ShaderMaterial({
     uniforms: {
-      uTime: { value: 0 }, uRs: { value: Rs }, uRb: { value: Rb }, uRin: { value: 3.0 }, uRout: { value: 10.4 },
+      uExpo: { value: 1 }, uTime: { value: 0 }, uRs: { value: Rs }, uRb: { value: Rb }, uRin: { value: 3.0 }, uRout: { value: 10.4 },
       uSpin: { value: o.spin }, uBeam: { value: o.beaming }, uIntensity: { value: o.intensity },
-      uSeed: { value: (o.seed * 7.31) % 50 }, uJets: { value: o.jets },
+      uSeed: { value: (o.seed * 7.31) % 50 }, uGlow: { value: o.glow },
+      uEnv: { value: null }, uHasEnv: { value: 0 }, uEnvGain: { value: o.envGain }, uEnvRot: { value: new THREE.Matrix3() },
     },
     vertexShader: traceVert, fragmentShader: traceFrag, side: THREE.BackSide, transparent: true, depthWrite: false,
     blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
@@ -222,6 +279,25 @@ export function create(opts = {}) {
 
   return {
     group, radius: Rb * Rs * 0.95,
-    update(time) { trace.material.uniforms.uTime.value = time; jetMat.uniforms.uTime.value = time; },
+    update(time, dt, camera) {
+      const u = trace.material.uniforms;
+      u.uTime.value = time; jetMat.uniforms.uTime.value = time;
+      if (camera) { // gentle exposure adaptation: close up the disk fills the screen and the bloom would wash the shadow
+        group.getWorldPosition(_c); const s = group.getWorldScale(_s).x;
+        const d = _p.setFromMatrixPosition(camera.matrixWorld).distanceTo(_c) / (s * o.size);
+        u.uExpo.value = 0.5 + 0.5 * THREE.MathUtils.smoothstep(d, 2.0, 9.0);
+      }
+      if (u.uHasEnv.value) {
+        group.updateWorldMatrix(true, false);
+        const e = group.matrixWorld.elements; // rotation part, scale removed
+        const sx = Math.hypot(e[0], e[1], e[2]), sy = Math.hypot(e[4], e[5], e[6]), sz = Math.hypot(e[8], e[9], e[10]);
+        u.uEnvRot.value.set(e[0] / sx, e[4] / sy, e[8] / sz, e[1] / sx, e[5] / sy, e[9] / sz, e[2] / sx, e[6] / sy, e[10] / sz);
+      }
+    },
+    // the site's baked sky cubemap (world-space directions): enables the lensed-backdrop term near the hole
+    setEnvironment(tex) {
+      const u = trace.material.uniforms;
+      u.uEnv.value = tex || null; u.uHasEnv.value = tex ? 1 : 0;
+    },
   };
 }

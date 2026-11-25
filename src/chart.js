@@ -42,5 +42,5 @@ export function createChart(nodes) {
     vertexShader: `uniform float uScale; varying vec3 vC; void main(){ vC=color; vec4 mv=modelViewMatrix*vec4(position,1.0); gl_Position=projectionMatrix*mv; gl_PointSize=clamp(0.9*uScale/max(-mv.z,0.1),5.0,40.0); }`,
     fragmentShader: `varying vec3 vC; void main(){ float r=length(gl_PointCoord-0.5)*2.0; float ring=smoothstep(0.16,0.0,abs(r-0.72)); float dot_=smoothstep(0.22,0.08,r); gl_FragColor=vec4(vC*(ring*0.3+dot_*0.5),1.0); }` });
   group.add(new THREE.Points(fg, footMat));
-  return { group, update(pxScale) { footMat.uniforms.uScale.value = pxScale; } };
+  return { group, grid, update(pxScale) { footMat.uniforms.uScale.value = pxScale; } };
 }
