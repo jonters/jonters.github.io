@@ -1,6 +1,8 @@
-// Ambient decor: the deep-space scenery around the graph. Distant particle galaxies, soft nebula complexes and
-// filaments, star clusters and a mid-ground star layer, a slow debris stream lit by the sun, two comets with
-// ion and dust tails, rare meteor streaks and a distant ringed planet. Non-interactive and kept dim (below the
+// Ambient decor: the deep-space environment around the graph, composed as a few very large structures rather
+// than separate props: a braided nebular river winding through the mid-field, a molecular-cloud wall with dark
+// pillars, a lacy supernova-remnant shell that partly encloses the system, a veil of gas below the chart plane
+// that ties the emission complexes together, one large nearby spiral galaxy and smaller distant ones, star
+// clusters and field stars, a debris stream, two comets and rare meteors. Non-interactive and kept dim (below the
 // bloom threshold apart from tiny cores) so the graph stays the brightest thing on screen. Everything animates
 // as a pure function of `time` in vertex shaders.
 // createAmbient({ nodes, environment }) -> { group, update(time, dt, camera, viewportHeightPx) }
@@ -47,12 +49,9 @@ const additive = { transparent: true, depthWrite: false, depthTest: true, blendi
 // ---------- layout (az radians in the rig's convention, horizontal distance, height) ----------
 const L = {
   // galaxies: placed high or low in the overview frame so they sit beside the graph rather than behind it
-  g1: { pos: at(3.45, 235, -185), R: 46, incl: 1.0, pa: 0.5, seed: 11 },  // grand-design spiral, warm core, blue arms
+  g1: { pos: at(3.45, 300, -200), R: 100, incl: 1.0, pa: 0.5, seed: 11 },  // grand-design spiral, warm core, blue arms
   g2: { pos: at(0.55, 225, 36), R: 34, incl: 1.45, pa: 2.2, seed: 23 },   // near edge-on lenticular with a dust lane
   g3: { pos: at(5.3, 260, -120), R: 28, incl: 0.6, pa: 4.0, seed: 37 },   // small barred spiral, cooler
-  g4: { pos: V3(135, -235, -70), R: 30, incl: 0.3, pa: 1.0, seed: 53 },    // faint face-on flocculent spiral far below the chart
-  // ringed planet
-  planet: { pos: at(1.95, 120, -90), R: 5.5, tilt: [1.2, 0.0, 0.3] },
   // star clusters
   glob1: { pos: at(4.55, 185, 40), R: 5 },
   glob2: { pos: at(2.45, 235, -118), R: 6 },
@@ -258,7 +257,7 @@ attribute vec3 iCenter; attribute vec3 iU; attribute vec3 iV;
 attribute vec4 iColor; // rgb, w billboard radius (0 = world quad)
 attribute vec4 iParam; // x type (0 cloud, 1 glow, 2 filament, 3 disk), y seed, z drift, w roll
 uniform float uTime;
-varying vec2 vQ; varying vec3 vCol; varying vec4 vPar; varying float vFade;
+varying vec2 vQ; varying vec3 vCol; varying vec4 vPar; varying float vFade; varying vec3 vWp;
 ${CF}
 void main(){
   vec3 c=iCenter+iParam.z*vec3(sin(uTime*0.021+iParam.y*1.7),0.6*sin(uTime*0.017+iParam.y*2.3),cos(uTime*0.019+iParam.y*3.1));
@@ -273,19 +272,40 @@ void main(){
   float size=bill>0.5 ? iColor.w : max(length(iU),length(iV));
   float d=distance(cameraPosition,wc);
   float fade=smoothstep(size*0.7+2.0,size*1.8+10.0,d)*centerFade(wc);
-  vQ=q; vCol=iColor.rgb*fade; vPar=iParam; vFade=fade;
+  vQ=q; vCol=iColor.rgb*fade; vPar=iParam; vFade=fade; vWp=wc+off;
   gl_Position=projectionMatrix*viewMatrix*vec4(wc+off,1.0);
   if(fade<0.002) gl_Position=vec4(2.0,2.0,2.0,1.0);
 }`;
 const spriteFrag = /* glsl */ `
 uniform float uTime;
-varying vec2 vQ; varying vec3 vCol; varying vec4 vPar; varying float vFade;
+varying vec2 vQ; varying vec3 vCol; varying vec4 vPar; varying float vFade; varying vec3 vWp;
 ${NOISE}
 void main(){
   float r2=dot(vQ,vQ); if(r2>1.0) discard;
   float type=vPar.x, seed=vPar.y;
   float t=uTime*0.012;
   float v;
+  if(type>5.5){
+    // volume gas (6) and dark dust (7): the noise lives in world space (seed = its frequency), so every sprite of
+    // a formation samples the same field and neighbours merge into one continuous cloud; the sprite is only a
+    // soft window onto it. Three scales: large masses, lumps, ridges.
+    float f=1.0-r2; f*=f; if(f*max(vCol.r,max(vCol.g,vCol.b))<0.0015 && type<6.5) discard;   // skip the noise where the window is closed
+    vec3 P=vWp*seed;
+    float b=snoise(P*0.37+vec3(t,0.0,0.0));
+    float n=snoise(P+b*0.6+vec3(0.0,t,0.0));
+    float m=snoise(P*2.6+n*0.9-vec3(0.0,0.0,t*1.3));
+    if(type>6.5){
+      float dd=smoothstep(0.05,0.7,0.15+0.5*b+0.4*n+0.18*m)*f;
+      float rim=smoothstep(0.03,0.2,dd)*(1.0-smoothstep(0.2,0.5,dd))*(0.6+0.4*m);
+      gl_FragColor=vec4(vCol*rim,dd*0.92*vFade);
+      return;
+    }
+    float dens=smoothstep(-0.05,0.85,0.28+0.45*b+0.4*n+0.2*m);
+    float ridge=pow(1.0-abs(m),6.0)*smoothstep(0.1,0.6,dens);
+    float wisp=pow(1.0-abs(n),4.0)*0.5*dens;
+    gl_FragColor=vec4(vCol*f*(dens*dens*1.5+ridge*1.5+wisp)*1.25,0.0);
+    return;
+  }
   if(type<0.5){
     // nebula puff: domain-warped noise eroded into a lumpy body, sharp ionisation ridges, fine wisps
     float f=1.0-r2; f*=f;
@@ -311,17 +331,6 @@ void main(){
     // tiny background galaxy (world quad in its disk plane): bulge + exponential disk
     float r=sqrt(r2);
     v=exp(-r2*60.0)*1.2+exp(-r*5.0)*0.45*(1.0-r2);
-  } else if(type>3.5){
-    // ring nebula: a clumpy shell, teal inside and amber at the rim, with faint outer halo
-    vec2 e=vQ*vec2(1.0,1.22); float r=length(e);
-    float n=snoise(vec3(e*3.0,seed+t));
-    float m=snoise(vec3(e*8.0+n,seed*2.0-t));
-    float shell=exp(-pow((r-0.5-0.05*n)/0.075,2.0))*max(0.15,0.55+0.6*m+0.3*n);
-    float inner=smoothstep(0.52,0.1,r)*0.22*(0.7+0.5*n);
-    float halo=exp(-pow((r-0.75)/0.12,2.0))*0.25*(0.6+0.6*n);
-    vec3 cc=vec3(0.2,0.75,0.8)*inner+mix(vec3(0.3,0.8,0.85),vec3(1.0,0.55,0.25),smoothstep(0.42,0.6,r))*shell+vec3(0.9,0.4,0.35)*halo;
-    gl_FragColor=vec4(vCol*cc*(1.0-r2)*2.0,0.0);
-    return;
   } else {
     // dark dust globule: absorbs what is behind it (premultiplied alpha), thin glowing rim where it thins out
     float f=1.0-r2; f*=f;
@@ -345,6 +354,7 @@ function createSprites() {
       const g = new THREE.InstancedBufferGeometry();
       g.index = base.index; g.setAttribute('position', base.attributes.position);
       const c = new Float32Array(n * 3), u = new Float32Array(n * 3), v = new Float32Array(n * 3), cl = new Float32Array(n * 4), pr = new Float32Array(n * 4);
+      list.sort((a, b) => b.center.lengthSq() - a.center.lengthSq()); // far to near: nearer dust darkens farther glow
       list.forEach((s, i) => {
         c.set([s.center.x, s.center.y, s.center.z], i * 3);
         if (s.U) { u.set([s.U.x, s.U.y, s.U.z], i * 3); v.set([s.V.x, s.V.y, s.V.z], i * 3); }
@@ -383,19 +393,92 @@ function cloudComplex(S, o) {
     const pal = o.palette; const f = s * (pal.length - 1), j = Math.min(pal.length - 2, Math.floor(f));
     tmp.copy(pal[j]).lerp(pal[j + 1], f - j).multiplyScalar(o.gain * (0.55 + r() * 0.6));
     const rr = o.rad || [0.3, 0.35];
-    S.add(p, tmp.clone(), o.size * (rr[0] + r() * rr[1]), o.type || 0, r() * 10, o.size * 0.04, r() * 6.28);
+    if (o.vol) S.add(p, tmp.clone().multiplyScalar(0.8), o.size * (rr[0] + r() * rr[1]) * 1.15, 6, o.vol, 0, 0);
+    else S.add(p, tmp.clone(), o.size * (rr[0] + r() * rr[1]), o.type || 0, r() * 10, o.size * 0.04, r() * 6.28);
   }
   if (o.nursery) for (const c of subs) o.nursery.push({ c, R: o.size * 0.35, n: 14 + Math.floor(r() * 16) });
   for (let i = 0; i < (o.filaments || 0); i++) {
     const a = subs[Math.floor(r() * subs.length)];
     const p = a.clone().add(randDir(r).multiplyScalar(o.size * 0.5));
-    const dir = axis.clone().add(randDir(r).multiplyScalar(0.9)).normalize();
+    const dir = axis.clone().add(randDir(r).multiplyScalar(0.35)).normalize();
     const n2 = V3().crossVectors(dir, randDir(r)).normalize();
     const len = o.size * (0.6 + r() * 0.7);
     tmp.copy(o.palette[Math.floor(r() * o.palette.length)]).multiplyScalar(o.gain * 1.1);
     S.add(p, tmp.clone(), 0, 2, r() * 10, o.size * 0.03, 0, dir.multiplyScalar(len), n2.multiplyScalar(len * 0.22));
   }
 }
+
+// A long formation along a spline: braided volume gas, flow-aligned filaments and dark dust on one flank.
+const VOL = 0.045; // world-noise frequency shared by the gas formations, so where they touch they join
+function strand(S, o) {
+  const r = rng(o.seed), curve = new THREE.CatmullRomCurve3(o.pts, !!o.closed, 'centripetal');
+  const T = V3(), tmp = new THREE.Color(), pal = o.palette;
+  const frame = u => { curve.getTangentAt(u, T); const side = V3().crossVectors(T, V3(0, 1, 0)).normalize(); return { p: curve.getPointAt(u), side, up: V3().crossVectors(side, T) }; };
+  const colAt = (u, k) => { const f = Math.min(0.9999, Math.max(0, u)) * (pal.length - 1), j = Math.floor(f); return tmp.copy(pal[j]).lerp(pal[j + 1], f - j).multiplyScalar(k).clone(); };
+  const env = u => o.closed ? 1 : Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, u))), 0.5);
+  for (let i = 0; i < o.puffs; i++) {
+    const u = (i + r()) / o.puffs, f = frame(u), br = i % o.braids, ph = br * 2.1 + o.seed;
+    const w = o.width * (0.6 + 0.8 * Math.abs(Math.sin(u * 5.3 + o.seed)));   // the stream swells and pinches
+    f.p.addScaledVector(f.side, Math.sin(u * o.twist + ph) * w + gauss(r) * w * 0.25).addScaledVector(f.up, Math.cos(u * o.twist * 0.7 + ph) * w * 0.55 + gauss(r) * w * 0.2);
+    const big = Math.pow(r(), 3);
+    S.add(f.p, colAt(u + gauss(r) * 0.05, o.gain * (0.5 + r() * 0.7) * env(u)), o.size * (0.6 + 0.5 * r() + 1.1 * big), 6, o.freq || VOL, 0, 0);
+  }
+  for (let i = 0; i < o.filaments; i++) {
+    const u = r(), f = frame(u), len = o.size * (1.5 + r() * 2.5);
+    f.p.addScaledVector(f.side, gauss(r) * o.width * 0.8).addScaledVector(f.up, gauss(r) * o.width * 0.5);
+    const dir = T.clone().addScaledVector(f.side, gauss(r) * 0.15).addScaledVector(f.up, gauss(r) * 0.15).normalize();
+    const n2 = V3().crossVectors(dir, randDir(r)).normalize();
+    S.add(f.p, colAt(u, o.gain * 1.3 * env(u)), 0, 2, r() * 10, 0, 0, dir.multiplyScalar(len), n2.multiplyScalar(len * 0.16));
+  }
+  for (let i = 0; i < (o.dust || 0); i++) {
+    const u = 0.06 + r() * 0.88, f = frame(u), len = o.size * (1.2 + r() * 1.6);
+    // on the flank facing the origin, so from most vantages it lies in front of the glow
+    const inward = f.p.clone().multiplyScalar(-1).normalize();
+    f.p.addScaledVector(inward, o.width * (0.5 + r() * 0.6)).addScaledVector(f.up, gauss(r) * o.width * 0.5);
+    const dir = T.clone().addScaledVector(f.up, gauss(r) * 0.3).normalize(), n2 = V3().crossVectors(dir, inward).normalize();
+    S.add(f.p, colAt(u, o.gain * 1.2), 0, 7, (o.freq || VOL) * 1.6, 0, 0, dir.multiplyScalar(len), n2.multiplyScalar(len * (0.3 + r() * 0.25)));
+  }
+}
+
+// ======================================================================================================
+// Supernova-remnant shell: one thin, slightly lumpy sphere drawn additively from both sides. The fragment
+// shader draws only lacy filaments (ridged noise on the sphere), strongest where the shell is seen edge-on,
+// in patches, so what you see is arcs and veils rather than a ball.
+// ======================================================================================================
+const shellVert = /* glsl */ `
+uniform float uSeed;
+varying vec3 vD; varying vec3 vW; varying vec4 vLow; varying float vCF;
+${NOISE}
+${CF}
+void main(){
+  vec3 d=normalize(position);
+  float lump=snoise(d*1.4+uSeed);
+  vec3 p=d*(1.0+0.09*lump+0.04*snoise(d*3.1-uSeed));
+  vec4 w=modelMatrix*vec4(p,1.0);
+  vD=d; vW=w.xyz;
+  // low-frequency terms per vertex: warp, patch mask, colour mix
+  vLow=vec4(snoise(d*2.2+uSeed*1.7), smoothstep(-0.25,0.45,snoise(d*1.25+uSeed*3.1)+0.25*lump), snoise(d*1.9-uSeed), 0.0);
+  vCF=centerFade(w.xyz);
+  gl_Position=projectionMatrix*viewMatrix*w;
+}`;
+const shellFrag = /* glsl */ `
+uniform float uTime, uSeed, uGain; uniform vec3 uCenter, uColA, uColB;
+varying vec3 vD; varying vec3 vW; varying vec4 vLow; varying float vCF;
+${NOISE}
+void main(){
+  if(vLow.y*vCF<0.02) discard;   // outside the lit patches: skip the noise
+  vec3 d=normalize(vD);
+  vec3 N=normalize(vW-uCenter); vec3 V=normalize(cameraPosition-vW);
+  float mu=abs(dot(N,V));
+  float edge=min(1.0/(mu+0.3),2.8)*0.3;          // a thin shell is brightest where the line of sight grazes it
+  vec3 p=d*5.2+uSeed+vLow.x*0.55;
+  float r1=1.0-abs(snoise(p+vec3(0.0,uTime*0.004,0.0)));
+  float r2=1.0-abs(snoise(p*2.7+vLow.x));
+  float lace=pow(r1,8.0)+0.5*pow(r2,10.0)*r1+0.09*r1*r1;
+  vec3 c=mix(uColA,uColB,smoothstep(-0.35,0.35,vLow.z+0.4*(r2-0.5)));
+  float dist=distance(cameraPosition,vW);
+  gl_FragColor=vec4(c*lace*vLow.y*(0.2+edge)*uGain*vCF*smoothstep(15.0,70.0,dist),1.0);
+}`;
 
 // ======================================================================================================
 // Point stars: mid-ground field stars (parallax), globular and open clusters, debris-stream dust.
@@ -620,81 +703,6 @@ varying float vA; varying float vS;
 void main(){ float p=exp(-vS*vS*3.0); gl_FragColor=vec4(vec3(0.85,0.92,1.0)*vA*p*0.9,1.0); }`;
 
 // ======================================================================================================
-// Ringed planet: banded gas giant lit by the sun at the origin; ring with Cassini gap; mutual shadows.
-// ======================================================================================================
-const planetVert = /* glsl */ `
-uniform vec3 uC;
-varying vec3 vN; varying vec3 vW; varying vec3 vL; varying float vCF;
-${CF}
-void main(){ vCF=centerFadeK(uC,1.35); vL=normalize(position); vN=normalize(mat3(modelMatrix)*normal); vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`;
-const planetFrag = /* glsl */ `
-uniform vec3 uC; uniform vec3 uRingN; uniform float uR, uTime;
-varying vec3 vN; varying vec3 vW; varying vec3 vL; varying float vCF;
-${NOISE}
-float rh(float p){ p=fract(p*0.1031); p*=p+33.33; p*=p+p; return fract(p); }
-float rn(float x){ float i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f); return mix(rh(i),rh(i+1.0),f); }
-float ringDen(float rr){
-  float C=0.22*smoothstep(1.24,1.3,rr)*(1.0-smoothstep(1.5,1.53,rr));
-  float B=smoothstep(1.5,1.56,rr)*(1.0-smoothstep(1.92,1.95,rr))*(0.75+0.25*smoothstep(1.55,1.8,rr));
-  float A=0.62*smoothstep(1.99,2.03,rr)*(1.0-smoothstep(2.26,2.3,rr))*(1.0-0.9*exp(-pow((rr-2.2)/0.008,2.0)));
-  float d=C+B+A;
-  d*=0.62+0.38*(rn(rr*90.0)*0.6+rn(rr*310.0)*0.4);
-  return clamp(d,0.0,1.0);
-}
-void main(){
-  vec3 N=normalize(vN); vec3 Ls=normalize(-uC); vec3 V=normalize(cameraPosition-vW);
-  float lat=vL.y;
-  float w=snoise(vec3(vL.xz*2.0,lat*3.0+uTime*0.004))*0.022;
-  float bands=sin((lat+w)*22.0+0.4*sin(lat*9.0))*0.5+0.5; float bands2=sin((lat+w*1.6)*57.0+1.0)*0.5+0.5;
-  vec3 a=mix(vec3(0.82,0.68,0.5),vec3(0.92,0.84,0.68),bands*0.7); a=mix(a,vec3(0.7,0.56,0.42),bands2*0.18);
-  a=mix(a,vec3(0.55,0.68,0.78),smoothstep(0.7,0.95,abs(lat))*0.6);
-  float diff=max(dot(N,Ls),0.0);
-  float term=smoothstep(-0.05,0.25,dot(N,Ls));
-  // ring shadow on the planet
-  float tt=dot(uC-vW,uRingN)/dot(Ls,uRingN);
-  float sh=1.0;
-  if(tt>0.0){ vec3 hp=vW+Ls*tt; sh=1.0-0.75*ringDen(length(hp-uC)/uR); }
-  float mu=max(dot(N,V),0.0);
-  vec3 c=a*(pow(diff,0.8)*0.38*sh)*mix(0.75,1.0,mu);
-  c+=vec3(0.35,0.55,0.8)*pow(1.0-mu,3.0)*term*0.12;
-  // warm hazy limb on the day side and a thin forward-scattering rim around the night side
-  c+=vec3(1.0,0.72,0.42)*pow(1.0-mu,2.2)*smoothstep(-0.2,0.5,dot(N,Ls))*0.16;
-  c+=vec3(0.9,0.6,0.35)*pow(1.0-mu,6.0)*pow(max(dot(-V,Ls),0.0),3.0)*0.25;
-  gl_FragColor=vec4(c*vCF,1.0);
-}`;
-const ringVert = /* glsl */ `
-uniform vec3 uC;
-varying vec3 vW; varying float vCF;
-${CF}
-void main(){ vCF=centerFadeK(uC,1.35); vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`;
-const ringFrag = /* glsl */ `
-uniform vec3 uC; uniform vec3 uRingN; uniform float uR;
-varying vec3 vW; varying float vCF;
-float rh(float p){ p=fract(p*0.1031); p*=p+33.33; p*=p+p; return fract(p); }
-float rn(float x){ float i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f); return mix(rh(i),rh(i+1.0),f); }
-float ringDen(float rr){
-  float C=0.22*smoothstep(1.24,1.3,rr)*(1.0-smoothstep(1.5,1.53,rr));
-  float B=smoothstep(1.5,1.56,rr)*(1.0-smoothstep(1.92,1.95,rr))*(0.75+0.25*smoothstep(1.55,1.8,rr));
-  float A=0.62*smoothstep(1.99,2.03,rr)*(1.0-smoothstep(2.26,2.3,rr))*(1.0-0.9*exp(-pow((rr-2.2)/0.008,2.0)));
-  float d=C+B+A;
-  d*=0.62+0.38*(rn(rr*90.0)*0.6+rn(rr*310.0)*0.4);
-  return clamp(d,0.0,1.0);
-}
-void main(){
-  vec3 dv=vW-uC; float rr=length(dv)/uR;
-  float den=ringDen(rr); if(den<0.003) discard;
-  vec3 Ls=normalize(-uC); vec3 V=normalize(cameraPosition-vW);
-  // planet shadow
-  float tc=dot(-dv,Ls); float sh=1.0;
-  if(tc>0.0){ float miss=length(dv+Ls*tc)/uR; sh=smoothstep(0.96,1.04,miss); }
-  float sameSide=sign(dot(Ls,uRingN))*sign(dot(V,uRingN));
-  float lit=sameSide>0.0 ? 0.4 : 0.12;
-  vec3 c=mix(vec3(0.66,0.56,0.45),vec3(0.88,0.82,0.72),rn(rr*25.0))*den*lit*sh;
-  float d=distance(cameraPosition,vW);
-  gl_FragColor=vec4(c*smoothstep(4.0,16.0,d)*vCF,1.0);
-}`;
-
-// ======================================================================================================
 export function createAmbient({ nodes = [] } = {}) {
   const group = new THREE.Group();
   group.name = 'ambient';
@@ -711,7 +719,7 @@ export function createAmbient({ nodes = [] } = {}) {
   // ----- galaxies -----
   const GD = [
     { ...L.g1, arms: 2, pitch: 0.36, bulge: 0.12, h: 0.4, armAmp: 0.88, armSharp: 3, lane: 0.85, laneOff: 0.75, thick: 0.018, laneS: 0.9,
-      nStars: 7000, nDiffuse: 0, nKnots: 60, nBulge: 1600, bulgeFlat: 0.7, cBulge: '#ffd29a', cInner: '#ffe6c4', cArm: '#9fbaff', cKnot: '#ff5f9a', gain: 0.36, spin: 0.004,
+      nStars: 15000, nDiffuse: 0, nKnots: 130, nBulge: 2600, bulgeFlat: 0.7, cBulge: '#ffd29a', cInner: '#ffe6c4', cArm: '#9fbaff', cKnot: '#ff5f9a', gain: 0.36, spin: 0.004,
       cB: col('#ffcf96', 0.5), cA: col('#a4c0ff', 0.9), cK: col('#ff4f8f', 0.6), diskGain: 0.8 },
     { ...L.g2, arms: 2, pitch: 0.25, bulge: 0.24, h: 0.27, armAmp: 0.2, armSharp: 2, lane: 0, laneOff: 0.7, thick: 0.03, midLane: 0.016, laneS: 0,
       nStars: 4500, nDiffuse: 0, nKnots: 6, nBulge: 2200, bulgeFlat: 0.62, cBulge: '#ffc98e', cInner: '#ffe2bf', cArm: '#dfe4ff', cKnot: '#ff8fb0', gain: 0.42, spin: 0.003,
@@ -719,12 +727,19 @@ export function createAmbient({ nodes = [] } = {}) {
     { ...L.g3, arms: 2, pitch: 0.42, bulge: 0.09, h: 0.42, armAmp: 0.8, armSharp: 2.5, lane: 0.6, laneOff: 0.7, thick: 0.02, bar: 0.22, laneS: 0.6,
       nStars: 4000, nDiffuse: 0, nKnots: 30, nBulge: 700, bulgeFlat: 0.7, cBulge: '#fff0d6', cInner: '#f2efff', cArm: '#7fb6ff', cKnot: '#ff6fa8', gain: 0.42, spin: 0.005,
       cB: col('#ffeacc', 0.4), cA: col('#86b2ff', 0.9), cK: col('#ff5fa0', 0.45), diskGain: 1 },
-    { ...L.g4, arms: 3, pitch: 0.5, bulge: 0.08, h: 0.38, armAmp: 0.6, armSharp: 2, lane: 0.4, laneOff: 0.7, thick: 0.02, laneS: 0.45,
-      nStars: 3500, nDiffuse: 0, nKnots: 30, nBulge: 500, bulgeFlat: 0.7, cBulge: '#ffe2c0', cInner: '#f0ecff', cArm: '#a0c4ff', cKnot: '#ff7ab0', gain: 0.38, spin: 0.004,
-      cB: col('#ffe0b8', 0.35), cA: col('#9cc0ff', 0.75), cK: col('#ff6aa8', 0.5), diskGain: 0.9 },
   ];
   for (const o of GD) { const g = makeGalaxy(o); o.q = g.pts.quaternion; group.add(g.pts); mats.push(g.mat); points += g.count; }
   const disks = createDisks(GD); group.add(disks.mesh); mats.push(disks.mat);
+
+  // ----- supernova-remnant shell: 380 units across, off-centre so the system sits inside one flank of it -----
+  {
+    const c = at(5.3, 130, 10), R = 190;
+    const mat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uSeed: { value: 4.7 }, uGain: { value: 0.3 }, uCenter: { value: c }, uColA: { value: col('#35c9c2') }, uColB: { value: col('#e0507a') } },
+      vertexShader: shellVert, fragmentShader: shellFrag, ...additive, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 48), mat);
+    mesh.position.copy(c); mesh.scale.setScalar(R); mesh.rotation.set(0.4, 1.1, 0.2); mesh.frustumCulled = false; mesh.renderOrder = -6.5;
+    group.add(mesh); mats.push(mat);
+  }
 
   // ----- sprites: nebulae, filaments, glows -----
   const S = createSprites();
@@ -738,23 +753,52 @@ export function createAmbient({ nodes = [] } = {}) {
   cloudComplex(S, { nursery, seed: 5, center: at(5.75, 160, -62), size: 30, stretch: 1.2, clumps: 5, puffs: 40, rad: [0.2, 0.25], filaments: 5, palette: [rose, pink, amber], gain: 0.032, axis: V3(1, -0.3, 0.2) });
   cloudComplex(S, { seed: 7, center: at(1.2, 230, -95), size: 45, stretch: 1.0, clumps: 4, puffs: 18, filaments: 3, palette: [violet, rose, violet], gain: 0.035 });
   cloudComplex(S, { seed: 9, center: at(4.1, 120, 70), size: 22, stretch: 1.6, clumps: 3, puffs: 14, filaments: 4, palette: [amber, rose], gain: 0.04, axis: V3(0.2, 0.3, 1) });
-  cloudComplex(S, { seed: 13, center: at(3.4, 200, -60), size: 34, stretch: 1.1, clumps: 3, puffs: 14, filaments: 3, palette: [teal, violet], gain: 0.035 });
+  cloudComplex(S, { seed: 13, vol: VOL, center: at(3.4, 200, -60), size: 34, stretch: 1.1, clumps: 3, puffs: 14, filaments: 3, palette: [teal, violet], gain: 0.035 });
   cloudComplex(S, { seed: 15, center: V3(-115, -175, 80), size: 40, stretch: 1.2, clumps: 4, puffs: 16, filaments: 4, palette: [blue, teal, violet], gain: 0.035 });
   cloudComplex(S, { seed: 17, center: V3(150, -60, -120), size: 40, stretch: 1.2, clumps: 4, puffs: 16, filaments: 4, palette: [rose, violet, teal], gain: 0.035 });
   // the richest emission complex, low on the far side of the default view, with a dark globule in front
-  cloudComplex(S, { nursery, seed: 41, center: at(4.45, 195, -108), size: 34, stretch: 1.4, clumps: 5, puffs: 26, filaments: 6, palette: [teal, blue, rose, pink], gain: 0.06, axis: V3(0.9, 0.35, -0.3) });
+  cloudComplex(S, { nursery, seed: 41, vol: VOL, center: at(4.45, 195, -108), size: 34, stretch: 1.4, clumps: 5, puffs: 26, filaments: 6, palette: [teal, blue, rose, pink], gain: 0.06, axis: V3(0.9, 0.35, -0.3) });
   cloudComplex(S, { seed: 43, type: 3, center: at(4.38, 175, -96), size: 12, stretch: 1.6, clumps: 2, puffs: 5, palette: [amber, rose], gain: 0.06, axis: V3(1, 0.5, 0) });
   // a ring of emission complexes 15-40 degrees below the chart plane on every side: the sky is darkest down
   // there, so this is where faint gas reads best and fills the lower half of the overview frame
   const cyan = col('#3fd6c4');
-  cloudComplex(S, { seed: 61, center: at(4.66, 143, -96), size: 32, stretch: 1.3, clumps: 4, puffs: 24, filaments: 4, palette: [teal, blue], gain: 0.07, axis: V3(1, 0.2, 0.3) });
-  cloudComplex(S, { nursery, seed: 63, center: at(5.44, 118, -112), size: 30, stretch: 1.2, clumps: 4, puffs: 22, filaments: 4, palette: [amber, rose], gain: 0.07, axis: V3(0.3, 0.1, 1) });
-  cloudComplex(S, { seed: 65, center: at(6.25, 147, -90), size: 34, stretch: 1.3, clumps: 4, puffs: 24, filaments: 5, palette: [teal, cyan, blue], gain: 0.065, axis: V3(1, -0.2, -0.2) });
-  cloudComplex(S, { seed: 67, center: at(1.43, 135, -103), size: 30, stretch: 1.4, clumps: 4, puffs: 22, filaments: 4, palette: [rose, amber], gain: 0.07, axis: V3(0.2, 0.3, 1) });
-  cloudComplex(S, { nursery, seed: 69, center: at(3.89, 99, -104), size: 38, stretch: 1.2, clumps: 5, puffs: 28, filaments: 5, palette: [blue, teal, cyan], gain: 0.08, axis: V3(1, 0, 0.5) });
-  cloudComplex(S, { seed: 71, center: at(2.6, 160, -80), size: 30, stretch: 1.3, clumps: 4, puffs: 20, filaments: 4, palette: [amber, rose, violet], gain: 0.065, axis: V3(0.5, 0.2, -1) });
-  // a large faint ring nebula (teal inner shell, amber outer rim) for the upper-right of the far side
-  S.add(at(1.57, 192, 20), col('#ffffff', 0.06), 40, 4, 3.3, 0, 0.6);
+  cloudComplex(S, { seed: 61, vol: VOL, center: at(4.66, 143, -96), size: 32, stretch: 1.3, clumps: 4, puffs: 24, filaments: 4, palette: [teal, blue], gain: 0.07, axis: V3(1, 0.2, 0.3) });
+  cloudComplex(S, { nursery, seed: 63, vol: VOL, center: at(5.44, 118, -112), size: 30, stretch: 1.2, clumps: 4, puffs: 22, filaments: 4, palette: [amber, rose], gain: 0.07, axis: V3(0.3, 0.1, 1) });
+  cloudComplex(S, { seed: 65, vol: VOL, center: at(6.25, 147, -90), size: 34, stretch: 1.3, clumps: 4, puffs: 24, filaments: 5, palette: [teal, cyan, blue], gain: 0.065, axis: V3(1, -0.2, -0.2) });
+  cloudComplex(S, { seed: 67, vol: VOL, center: at(1.43, 135, -103), size: 30, stretch: 1.4, clumps: 4, puffs: 22, filaments: 4, palette: [rose, amber], gain: 0.07, axis: V3(0.2, 0.3, 1) });
+  cloudComplex(S, { nursery, seed: 69, vol: VOL, center: at(3.89, 99, -104), size: 38, stretch: 1.2, clumps: 5, puffs: 28, filaments: 5, palette: [blue, teal, cyan], gain: 0.08, axis: V3(1, 0, 0.5) });
+  cloudComplex(S, { seed: 71, vol: VOL, center: at(2.6, 160, -80), size: 30, stretch: 1.3, clumps: 4, puffs: 20, filaments: 4, palette: [amber, rose, violet], gain: 0.065, axis: V3(0.5, 0.2, -1) });
+  // the veil: a closed, braided loop of faint gas below the chart plane that runs through those complexes, so
+  // they read as bright knots of one formation, with wisps along its flow and dust on its inner flank
+  strand(S, { seed: 91, closed: true, pts: [at(6.25, 147, -90), at(0.75, 150, -112), at(1.43, 135, -103), at(2.05, 155, -88), at(2.6, 160, -80), at(3.3, 175, -72), at(3.89, 120, -104), at(4.45, 180, -108), at(4.9, 140, -100), at(5.44, 118, -112), at(5.85, 150, -78)],
+    puffs: 96, braids: 3, twist: 26, width: 16, size: 17, gain: 0.04, filaments: 46, dust: 16, palette: [teal, blue, rose, amber, violet, blue, teal, cyan, amber, rose, teal] });
+  // the river: a braided stream that comes down from high on one side, winds past the graph through the
+  // mid-field just below the chart plane, and drains into the veil. The overview orbit sweeps along it.
+  strand(S, { seed: 93, pts: [at(0.2, 290, 150), at(0.75, 215, 85), at(1.45, 150, 30), at(2.15, 112, -6), at(2.85, 104, -28), at(3.55, 116, -46), at(4.15, 150, -74), at(4.5, 190, -104)],
+    puffs: 140, braids: 3, twist: 34, width: 9, size: 10.5, gain: 0.075, filaments: 70, dust: 30, palette: [violet, blue, teal, cyan, teal, blue, rose, amber] });
+  // the wall: a molecular cloud across a quarter of the low far sky, ragged on top, with dark pillars in front
+  {
+    const r = rng(95), tmp = new THREE.Color();
+    const wallAt = (u, v, dist) => at(0.25 + 1.45 * u, dist, -160 + 250 * v);
+    const top = u => 0.55 + 0.3 * Math.sin(u * 5.1 + 0.8) + 0.15 * Math.sin(u * 11.7);
+    for (let i = 0; i < 46; i++) {
+      const u = r(), v = Math.pow(r(), 1.3) * top(u);
+      tmp.copy(violet).lerp(rose, Math.min(1, v * 1.2 + r() * 0.3)).lerp(amber, Math.max(0, v / top(u) - 0.6) * 1.6).multiplyScalar(0.075 * (0.6 + r() * 0.6));
+      S.add(wallAt(u, v, 300 + gauss(r) * 14), tmp.clone(), 26 + r() * 22, 6, 0.021, 0, 0);
+    }
+    const flow = V3(0.5, 0.75, -0.4).normalize();
+    for (let i = 0; i < 22; i++) {
+      const u = r(), v = r() * top(u) * 1.1, len = 30 + r() * 45;
+      const dir = flow.clone().add(randDir(r).multiplyScalar(0.25)).normalize(), n2 = V3().crossVectors(dir, randDir(r)).normalize();
+      S.add(wallAt(u, v, 292), col(r() < 0.5 ? '#ff9a5a' : '#e0609a', 0.07), 0, 2, r() * 10, 0, 0, dir.multiplyScalar(len), n2.multiplyScalar(len * 0.15));
+    }
+    for (let i = 0; i < 13; i++) {   // pillars: tall dark columns standing in front of the glow, rim-lit
+      const u = 0.04 + 0.92 * (i + r() * 0.8) / 13, h = 26 + r() * 36;
+      const p = wallAt(u, top(u) * (0.45 + r() * 0.4), 276);
+      const upv = V3(gauss(r) * 0.25, 1, gauss(r) * 0.25).normalize(), sidev = V3().crossVectors(upv, p).normalize();
+      S.add(p, col('#ffa25e', 0.11), 0, 7, 0.034, 0, 0, sidev.multiplyScalar(h * (0.3 + r() * 0.2)), upv.multiplyScalar(h));
+    }
+  }
   // tiny background galaxies scattered over the whole sphere (some straight up or down), a few pixels across
   {
     const r = rng(77);
@@ -857,7 +901,7 @@ export function createAmbient({ nodes = [] } = {}) {
 
   // ----- debris rocks -----
   {
-    const NR = 320, r = rng(202);
+    const NR = 200, r = rng(202);
     const geo = new THREE.InstancedBufferGeometry().copy(rockGeometry(5));
     const orb = new Float32Array(NR * 4), spin = new Float32Array(NR * 4), shape = new Float32Array(NR * 3);
     for (let i = 0; i < NR; i++) {
@@ -902,25 +946,9 @@ export function createAmbient({ nodes = [] } = {}) {
     group.add(m); mats.push(meteorMat);
   }
 
-  // ----- ringed planet -----
-  {
-    const pl = L.planet;
-    const holder = new THREE.Group(); holder.position.copy(pl.pos); holder.rotation.set(...pl.tilt);
-    holder.updateMatrixWorld();
-    const ringN = V3(0, 1, 0).applyQuaternion(holder.quaternion);
-    const pu = { uC: { value: pl.pos.clone() }, uRingN: { value: ringN }, uR: { value: pl.R }, uTime: { value: 0 } };
-    var planetMat = new THREE.ShaderMaterial({ uniforms: pu, vertexShader: planetVert, fragmentShader: planetFrag, depthWrite: true, depthTest: true });
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(pl.R, 64, 40), planetMat);
-    sphere.renderOrder = -7;
-    const ringMat = new THREE.ShaderMaterial({ uniforms: pu, vertexShader: ringVert, fragmentShader: ringFrag, ...additive, side: THREE.DoubleSide });
-    const ring = new THREE.Mesh(new THREE.RingGeometry(pl.R * 1.22, pl.R * 2.32, 160, 1), ringMat);
-    ring.rotation.x = -Math.PI / 2; ring.renderOrder = -1;
-    holder.add(sphere, ring); group.add(holder); mats.push(planetMat, ringMat);
-  }
-
   const tmpP = V3(), tmpV = V3();
   for (const m of mats) { m.uniforms.uCF = { value: 1 }; m.uniforms.uCard = { value: 0 }; if (!m.uniforms.uPixH) m.uniforms.uPixH = { value: 800 }; }
-  const info = { drawCalls: group.children.length + 1, points };
+  const info = { drawCalls: group.children.length, points };
   group.userData.info = info; group.userData.layout = L; group.userData.cometHeads = cu.uHead.value;
   return {
     group, info,
