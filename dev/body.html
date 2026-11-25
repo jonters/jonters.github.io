@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8"><title>body harness</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}canvas{display:block}</style>
+<canvas id="c"></canvas>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.min.js","three/addons/":"../vendor/addons/"}}</script>
+<script type="module">
+// Harness: dev/body.html?b=<module name in src/bodies>&dist=6&az=30&el=15&t=0
+// Renders one body through the site's real post chain. Drag to orbit, wheel to zoom.
+// ?t=<seconds> freezes time (deterministic screenshots); omit for live animation.
+import * as THREE from 'three';
+import { createRenderer, createPost } from '../src/post.js';
+const q = new URLSearchParams(location.search);
+const renderer = createRenderer(document.getElementById('c'));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 4000);
+const post = createPost(renderer, scene, camera);
+let dist = +(q.get('dist') || 6), az = +(q.get('az') || 30) * Math.PI / 180, el = +(q.get('el') || 15) * Math.PI / 180;
+const mod = await import(`../src/bodies/${q.get('b') || 'star'}.js`);
+const body = mod.create(JSON.parse(q.get('opts') || '{}'));
+scene.add(body.group);
+let drag = null;
+addEventListener('pointerdown', e => drag = [e.clientX, e.clientY]);
+addEventListener('pointerup', () => drag = null);
+addEventListener('pointermove', e => { if (!drag) return; az -= (e.clientX - drag[0]) * 0.006; el = Math.max(-1.5, Math.min(1.5, el + (e.clientY - drag[1]) * 0.006)); drag = [e.clientX, e.clientY]; });
+addEventListener('wheel', e => { dist *= Math.exp(e.deltaY * 0.001); });
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); post.setSize(innerWidth, innerHeight); });
+const frozen = q.has('t'); let last = performance.now(), time = +(q.get('t') || 0);
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; if (!frozen) time += dt;
+  camera.position.set(dist * Math.cos(el) * Math.sin(az), dist * Math.sin(el), dist * Math.cos(el) * Math.cos(az));
+  camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
+  body.update(time, frozen ? 0.016 : dt, camera);
+  post.render(time);
+  window.__frames = (window.__frames || 0) + 1;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
