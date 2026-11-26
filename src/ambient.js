@@ -575,21 +575,21 @@ function rockGeometry(seed) {
 }
 
 // ======================================================================================================
-// Fly-by comets. Every so often one crosses the visible sky: a small hot nucleus in a cyan-green coma, a broad
-// curved dust tail and a thinner, straighter blue ion tail with streamers running outward, both pointing away from
-// the home star (bent towards -velocity so they read from any vantage). The schedule is a pure function of time
-// (lane, slot) -> hash; the path is chosen relative to the camera when a comet appears, then stays fixed in world
-// space (so it has true parallax), crossing the frame from edge to edge well beyond the graph. One draw call.
+// Fly-by comet. Now and then (about once every 35-60 s) a comet crosses the sky far beyond the graph, the way one
+// looks in a long-exposure wide-field photo: a pinpoint nucleus in a small tight coma, a long slender dust tail that
+// is bright only near the head and then a faint whisper with fine streamers, and a hair-thin blue ion tail a few
+// degrees off it. Tails point away from the home star, bent toward -velocity so they read from any vantage. The
+// schedule is a pure function of time (slot -> hash); the path is chosen against the camera when the comet appears
+// (clear of the graph's stars and the page furniture), then stays fixed in world space for true parallax. One draw call.
 // ======================================================================================================
 const cometVert = /* glsl */ `
-attribute vec4 aC;     // x slot, y kind (0 coma, 1 ion tail, 2 dust tail), z along (quad x), w across (quad y)
-uniform vec4 uHead[2]; // xyz head, w visibility
-uniform vec4 uIon[2];  // xyz ion-tail direction (unit), w length
-uniform vec4 uDust[2]; // xyz dust-tail direction (unit), w length
-uniform vec4 uLag[2];  // xyz unit vector perpendicular to the dust axis toward -velocity, w coma radius
-uniform float uSeedC[2];
+attribute vec3 aC;     // x kind (0 head, 1 ion tail, 2 dust tail), y along (quad x), z across (quad y)
+uniform vec4 uHead;    // xyz head, w visibility
+uniform vec4 uIon;     // xyz ion-tail direction (unit), w length
+uniform vec4 uDust;    // xyz dust-tail direction (unit), w length
+uniform vec4 uLag;     // xyz unit vector perpendicular to the dust axis (the side it curves to), w width scale
 uniform float uPixH;
-varying vec3 vP; varying float vB; varying float vSeed; varying float vPx; varying vec2 vTd;
+varying vec3 vP; varying float vB; varying float vPx;
 ${CF}
 // like centerFade, but the card only dims what is level with it (a comet may pass above it), and the centre less
 float cometFade(vec3 wp){
@@ -603,109 +603,97 @@ float cometFade(vec3 wp){
 }
 vec3 sideOf(vec3 T, vec3 p, vec3 fb){ vec3 c=cross(T,cameraPosition-p); float l=length(c); return l>1e-5 ? c/l : fb; }
 void main(){
-  int i=int(aC.x+0.5);
-  vec4 H=uHead[i]; vec4 G=uLag[i];
-  float u=aC.z, s=aC.w, kind=aC.y, ss=s;
-  vec3 p; vPx=0.0; vTd=vec2(1.0,0.0);
+  float kind=aC.x, u=aC.y, s=aC.z, ph=max(uPixH,1.0), W=uLag.w;
+  vec3 H=uHead.xyz, p; float gain=1.0; vPx=0.0;
   if(kind<0.5){
-    // screen-space direction of the dust tail, so the coma can lean into it
-    vec4 a=projectionMatrix*viewMatrix*vec4(H.xyz,1.0), b=projectionMatrix*viewMatrix*vec4(H.xyz+uDust[i].xyz*(G.w*4.0),1.0);
-    if(a.w>1e-3 && b.w>1e-3){
-      vec2 td=(b.xy/b.w-a.xy/a.w)*vec2(projectionMatrix[0][0]>0.0 ? projectionMatrix[1][1]/projectionMatrix[0][0] : 1.0,1.0);
-      float l=length(td); vTd=l>1e-6 ? td/l : vec2(1.0,0.0);
-    }
+    // head: a fixed 22 px quad (pinpoint core and a tight glow), whatever the distance
     vec3 right=vec3(viewMatrix[0][0],viewMatrix[1][0],viewMatrix[2][0]);
     vec3 up=vec3(viewMatrix[0][1],viewMatrix[1][1],viewMatrix[2][1]);
-    float dist=max(distance(cameraPosition,H.xyz),1.0), ph=max(uPixH,1.0);
-    float R=max(G.w*3.0,14.0*dist/ph);            // the quad holds the halo and is never under 14 px
-    vPx=R*ph/dist;
-    p=H.xyz+(right*u+up*s)*R;
-  } else if(kind<1.5){
-    vec4 I=uIon[i];
-    p=H.xyz+I.xyz*(u*I.w);
-    p+=sideOf(I.xyz,p,G.xyz)*s*(G.w*0.45+I.w*0.03*u);
+    float dist=max(distance(cameraPosition,H),1.0);
+    vPx=22.0; p=H+(right*u+up*s)*(22.0*dist/ph);
   } else {
-    vec4 D=uDust[i]; float cv=0.36;
-    p=H.xyz+(D.xyz*u+G.xyz*(u*u*cv))*D.w;
-    vec3 T=D.xyz+G.xyz*(2.0*u*cv);
-    vec3 sd=sideOf(T,p,G.xyz);
-    p+=sd*s*(G.w*0.7+D.w*(0.02+0.17*u));
-    ss=dot(sd,G.xyz)<0.0 ? -s : s;                // +1 on the lagging (diffuse) flank, -1 on the sharp leading edge
+    vec3 T; float w, minPx;
+    if(kind<1.5){ p=H+uIon.xyz*(u*uIon.w); T=uIon.xyz; w=W*(0.0011+0.0035*u); minPx=0.9; }
+    else {
+      float cv=0.12;
+      p=H+(uDust.xyz*u+uLag.xyz*(u*u*cv))*uDust.w; T=uDust.xyz+uLag.xyz*(2.0*u*cv);
+      w=W*(0.0022+0.034*u*sqrt(u)); minPx=1.4;
+    }
+    // keep the ribbon at least minPx wide on screen and fold the difference into brightness (no sub-pixel shimmer)
+    float dist=max(distance(cameraPosition,p),1.0), wpx=w*ph/dist, wf=max(wpx,minPx);
+    gain=wpx/wf;
+    p+=sideOf(T,p,uLag.xyz)*s*(wf*dist/ph);
   }
-  vB=H.w*cometFade(p);
-  vP=vec3(u,ss,kind); vSeed=uSeedC[i];
+  vB=uHead.w*gain*cometFade(p);
+  vP=vec3(u,s,kind);
   gl_Position=projectionMatrix*viewMatrix*vec4(p,1.0);
-  if(H.w<1e-3) gl_Position=vec4(2.0,2.0,2.0,1.0);
+  if(uHead.w<1e-3) gl_Position=vec4(2.0,2.0,2.0,1.0);
 }`;
 const cometFrag = /* glsl */ `
-uniform float uTime;
-varying vec3 vP; varying float vB; varying float vSeed; varying float vPx; varying vec2 vTd;
+uniform float uTime, uSeedC;
+varying vec3 vP; varying float vB; varying float vPx;
 ${NOISE}
 void main(){
   float u=vP.x, s=vP.y, kind=vP.z; vec3 c;
   if(kind<0.5){
     float r2=u*u+s*s; if(r2>1.0) discard;
     float rp2=r2*vPx*vPx;                          // squared radius in pixels
-    vec2 q=vec2(u,s); float al=dot(q,vTd), pe2=max(dot(q,q)-al*al,0.0);
-    float hood=exp(-pe2*55.0)*exp(-max(al,0.0)*5.0)*smoothstep(-0.12,0.05,al);   // coma drawn out toward the tail
-    c=vec3(0.42,1.0,0.8)*(exp(-r2*4.5)*(1.0-r2)*0.09)       // faint green-cyan outer coma
-     +vec3(0.78,0.93,1.0)*(exp(-r2*22.0)*0.5+hood*(1.0-r2)*0.16) // inner coma
-     +vec3(1.0,0.97,0.92)*(exp(-rp2*0.32)*2.0);             // nucleus, ~2 px whatever the distance
+    c=vec3(1.0,0.98,0.95)*(exp(-rp2*0.9)*2.1)     // nucleus, ~1.5 px
+     +vec3(0.8,0.92,1.0)*(exp(-rp2*0.08)*0.4)     // tight inner glow, ~4 px
+     +vec3(0.5,1.0,0.86)*(exp(-rp2*0.018)*(1.0-r2)*0.05); // a hint of green-cyan coma
   } else {
-    float uu=clamp(u,0.0,1.0), q=max(1.0-s*s,0.0), om=1.0-uu;
+    float uu=clamp(u,0.0,1.0), om=1.0-uu, q=max(1.0-s*s,0.0);
     if(kind<1.5){
-      // ion tail: narrow, blue, streamers drifting outward along it
-      float n=snoise(vec3(uu*5.0-uTime*0.55,s*2.2,vSeed*3.1));
-      float m=snoise(vec3(uu*2.0-uTime*0.3,s*5.5+vSeed,vSeed*1.7));
-      float rays=pow(max(1.0-abs(m),0.0),6.0);
-      float prof=exp(-s*s*6.0)*q;
-      c=vec3(0.32,0.58,1.0)*(prof*(0.45+0.35*n+0.7*rays)*om*sqrt(om)*smoothstep(0.0,0.05,uu)*0.6);
+      // ion tail: hair-thin, straight, blue, with knots drifting outward
+      float n=snoise(vec3(uu*9.0-uTime*0.9,s*1.3,uSeedC*3.1));
+      float prof=exp(-s*s*4.0)*q;
+      float fall=(0.55*exp(-uu*4.0)+0.45*om)*om*smoothstep(0.0,0.02,uu);
+      c=vec3(0.45,0.66,1.0)*(prof*fall*(0.65+0.35*n)*0.5);
     } else {
-      // dust tail: broad and curved, sharp on the leading edge, diffuse on the lagging flank, faint striae
-      float a=s<0.0 ? s*s*4.5 : s*s*1.4;
-      float prof=exp(-a)*q;
-      float fall=exp(-uu*2.0)*om*smoothstep(0.0,0.035,uu);
-      float striae=1.0-0.16*smoothstep(0.08,0.35,uu)*(0.5+0.5*sin(uu*46.0-s*7.0+vSeed*5.0));
-      c=mix(vec3(1.0,0.93,0.8),vec3(1.0,0.7,0.45),uu)*(prof*fall*striae*0.5);
+      // dust tail: bright only close to the head, then a long faint whisper; fine streamers fan out from the head
+      // (s is the fanning coordinate, so lines of constant s diverge), plus faint synchrone bands across
+      float prof=exp(-s*s*3.2)*q;
+      float fall=(0.85*exp(-uu*9.0)+0.3*exp(-uu*1.6)*om)*smoothstep(0.0,0.012,uu);
+      float r1=snoise(vec3(s*2.6+uSeedC,uu*1.1,uSeedC*0.7));
+      float r2=snoise(vec3(s*7.5-uSeedC,uu*2.2+uSeedC,2.0));
+      float str=0.6+0.3*r1+0.45*pow(max(1.0-abs(r2),0.0),5.0);
+      str=mix(1.0,str,smoothstep(0.02,0.2,uu))*(0.92+0.08*sin(uu*36.0+s*3.0+uSeedC));
+      c=mix(vec3(1.0,0.95,0.88),vec3(0.76,0.86,1.0),smoothstep(0.0,0.25,uu))*(prof*fall*str*0.68);
     }
   }
   gl_FragColor=vec4(c*vB,1.0);
 }`;
 
 function cometGeometry() {
-  const SEG = 40, pos = [], aC = [], idx = [];
+  const SEG = 56, aC = [], idx = [];
   let base = 0;
-  for (let ci = 0; ci < 2; ci++) {
-    for (const kind of [2, 1]) {   // dust, ion, then the coma on top
-      for (let j = 0; j <= SEG; j++) for (const s of [-1, 1]) { pos.push(0, 0, 0); aC.push(ci, kind, Math.pow(j / SEG, 1.35), s); }
-      for (let j = 0; j < SEG; j++) { const a = base + j * 2; idx.push(a, a + 1, a + 3, a, a + 3, a + 2); }
-      base += (SEG + 1) * 2;
-    }
-    for (const [u, s] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { pos.push(0, 0, 0); aC.push(ci, 0, u, s); }
-    idx.push(base, base + 1, base + 2, base, base + 2, base + 3); base += 4;
+  for (const kind of [2, 1]) {   // dust, ion, then the head on top
+    for (let j = 0; j <= SEG; j++) for (const s of [-1, 1]) aC.push(kind, Math.pow(j / SEG, 1.6), s);   // denser near the head
+    for (let j = 0; j < SEG; j++) { const a = base + j * 2; idx.push(a, a + 1, a + 3, a, a + 3, a + 2); }
+    base += (SEG + 1) * 2;
   }
+  for (const [u, s] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) aC.push(0, u, s);
+  idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('aC', new THREE.Float32BufferAttribute(aC, 4));
+  g.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(aC.length), 3));
+  g.setAttribute('aC', new THREE.Float32BufferAttribute(aC, 3));
   g.setIndex(idx);
   return g;
 }
 
-// Schedule: two lanes with different periods; each slot holds at most one comet (so never more than two at once),
-// at a hashed time within the slot. About one every 18 s on average, irregularly spaced.
-const COMET_LANES = [{ P: 31, off: 0 }, { P: 37, off: 13.7 }];
+// Schedule: slot k of a 47 s period holds one comet starting at a hashed time, so consecutive comets are 35-59 s
+// apart and never overlap. The first comes 4-9 s after load so a visitor sees one.
+const COMET_P = 47;
 function hash3(a, b, c) {
   let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul((b | 0) + 0x632be5ab, 0x165667b1) ^ Math.imul((c | 0) + 0x5bd1e995, 0x9e3779b1);
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b); h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
-function cometSlot(lane, k, out) {
-  const Ln = COMET_LANES[lane];   // (no closures here: this runs every frame)
-  out.lane = lane; out.k = k;
-  out.dur = 8 + 4 * hash3(lane, k, 1);
-  const first = lane === 0 && k === 0;   // the first visit gets one early, 6-11 s in
-  out.on = k >= 0 && (first || hash3(lane, k, 2) < 0.85);
-  out.start = Ln.off + k * Ln.P + (first ? 6 + 5 * hash3(lane, k, 3) : 1 + hash3(lane, k, 3) * (Ln.P - out.dur - 2));
+function cometSlot(k, out) {   // (no closures here: this runs every frame)
+  out.k = k;
+  out.dur = 5.5 + 2.5 * hash3(7, k, 1);
+  out.on = k >= 0;
+  out.start = k * COMET_P + 4 + (k === 0 ? 5 : 12) * hash3(7, k, 3);
   return out;
 }
 
@@ -993,105 +981,111 @@ export function createAmbient({ nodes = [] } = {}) {
     group.add(mesh); mats.push(rockMat);
   }
 
-  // ----- fly-by comets (see cometSlot / spawnComet) -----
-  const V4 = () => new THREE.Vector4();
-  const cu = { uTime: { value: 0 }, uHead: { value: [V4(), V4()] }, uIon: { value: [V4(), V4()] }, uDust: { value: [V4(), V4()] }, uLag: { value: [V4(), V4()] }, uSeedC: { value: [0, 0] } };
+  // ----- fly-by comet (see cometSlot / spawnComet) -----
+  const cu = { uTime: { value: 0 }, uHead: { value: new THREE.Vector4() }, uIon: { value: new THREE.Vector4() }, uDust: { value: new THREE.Vector4() }, uLag: { value: new THREE.Vector4() }, uSeedC: { value: 0 } };
   const cometMat = new THREE.ShaderMaterial({ uniforms: cu, vertexShader: cometVert, fragmentShader: cometFrag, ...additive, side: THREE.DoubleSide });
   const comets = new THREE.Mesh(cometGeometry(), cometMat); comets.frustumCulled = false; comets.renderOrder = -2; comets.visible = false;
   group.add(comets); mats.push(cometMat);
-  const lanes = COMET_LANES.map(() => ({ key: null, p0: V3(), vel: V3(), cam: V3(), start: 0, dur: 1, comaR: 1, Ld: 1, Li: 1, seed: 0, gain: 1 }));
+  const cst = { key: null, p0: V3(), pc: V3(), p1: V3(), cam: V3(), start: 0, dur: 1, dm: 100, Ld: 1, Li: 1, seed: 0, gain: 1 };
   const scr = new Float32Array(nodes.length * 3);
-  const slot = {}, cC = V3(), cF = V3(), cA = V3(), cB = V3(), cH = V3(), cAnti = V3(), cVh = V3(), cR = V3(), cIon = V3(), cDust = V3(), cLag = V3();
+  const slot = {}, cC = V3(), cF = V3(), cA = V3(), cB = V3(), cM = V3(), cH = V3(), cV = V3(), cAnti = V3(), cVh = V3(), cR = V3(), cIon = V3(), cDust = V3(), cLag = V3();
   const rayAt = (x, y, camera, out) => {   // world ray through NDC (x, y), scaled to unit depth along the view axis
     out.set(x, y, 0.5).unproject(camera).sub(cC);
     return out.divideScalar(Math.max(out.dot(cF), 1e-4));
   };
-  // Pick the comet's path for this camera: a straight chord across the frame that keeps off the centre (where the
-  // graph is), entering and leaving just beyond the edges, unprojected at two depths well behind the graph.
-  function spawnComet(st, sl, camera, card) {
-    const h = j => hash3(sl.lane, sl.k, j);
+  // distance from the origin to the segment a-b
+  const segDist = (a, b) => { cR.copy(b).sub(a); const t = THREE.MathUtils.clamp(-a.dot(cR) / Math.max(cR.lengthSq(), 1e-6), 0, 1); return cR.multiplyScalar(t).add(a).length(); };
+  // Pick the path for this camera: a gently curved chord across the frame, entering at one edge and leaving past the
+  // other (so the tail sweeps out too), clear of the graph's stars, the title (top left) and the links (top right),
+  // unprojected at depths well behind the graph.
+  function spawnComet(sl, camera, card) {
+    const k = sl.k, h = j => hash3(7, k, j);
     camera.updateMatrixWorld();
     cC.setFromMatrixPosition(camera.matrixWorld); cF.set(0, 0, -1).transformDirection(camera.matrixWorld);
-    const asp = Math.max(camera.aspect, 0.3), m = 1.04, nN = nodes.length;
-    // where the graph is on screen right now, in aspect-scaled NDC
+    const asp = Math.max(camera.aspect, 0.3), m = 1.02, nN = nodes.length;
     for (let n = 0; n < nN; n++) { cR.copy(nodes[n].position).project(camera); scr[n * 3] = cR.x * asp; scr[n * 3 + 1] = cR.y; scr[n * 3 + 2] = cR.z > -1 && cR.z < 1 ? 1 : 0; }
-    // a few hashed candidate chords; keep the one that stays farthest from the graph's stars (long, high ones preferred)
     let best = -1e9, qx = 0, qy = 0.6, dx = 1, dy = 0, s0 = -asp * m, s1 = asp * m;
-    for (let c = 0; c < 6; c++) {
-      const g = j => hash3(sl.lane, sl.k, 20 + c * 6 + j);
+    for (let c = 0; c < 12; c++) {
+      const g = j => hash3(7, k, 20 + c * 8 + j);
       let cx, cy, ex, ey;
-      if (card > 0.5) {   // focused view: the focused star sits left of centre and the info card darkens the right,
-        // so cut across the upper left, between the top edge and the left edge
-        const a = 0.3 + 0.45 * g(0);
-        ex = Math.cos(a); ey = Math.sin(a); cx = -asp * (0.3 + 0.3 * g(1)); cy = 0.5 + 0.25 * g(2);
-      } else {            // overview: across the upper or lower sky, tilted up to ~22 degrees
-        const a = (0.05 + 0.33 * g(0)) * (g(3) < 0.5 ? -1 : 1);
-        ex = Math.cos(a); ey = Math.sin(a); cx = asp * 0.3 * (g(1) - 0.5); cy = (g(4) < 0.6 ? 1 : -1) * (0.5 + 0.32 * g(2));
+      if (card > 0.5) {   // focused view: the focused star sits left of centre and the card darkens the right, so
+        // cut across the upper left, between the top edge and the left edge
+        const a = 0.3 + 0.5 * g(0);
+        ex = Math.cos(a); ey = Math.sin(a); cx = -asp * (0.3 + 0.3 * g(1)); cy = 0.45 + 0.3 * g(2);
+      } else {            // overview: high or low in the sky, above or below the graph, tilted up to ~17 degrees
+        const a = (0.04 + 0.26 * g(0)) * (g(3) < 0.5 ? -1 : 1);
+        ex = Math.cos(a); ey = Math.sin(a); cx = asp * 0.4 * (g(1) - 0.5); cy = g(4) < 0.65 ? 0.55 + 0.3 * g(2) : -0.5 - 0.2 * g(2);
       }
       if (g(5) < 0.5) { ex = -ex; ey = -ey; }
-      // clip the line C + s*E to the frame
-      let t0 = -1e9, t1 = 1e9;
+      let t0 = -1e9, t1 = 1e9;   // clip the line C + t*E to the frame
       for (let ax = 0; ax < 2; ax++) {
         const q = ax ? cy : cx, d = ax ? ey : ex, lim = ax ? m : asp * m;
         if (Math.abs(d) < 1e-6) { if (Math.abs(q) > lim) t1 = t0; continue; }
         let u0 = (-lim - q) / d, u1 = (lim - q) / d; if (u0 > u1) { const t = u0; u0 = u1; u1 = t; }
         t0 = Math.max(t0, u0); t1 = Math.min(t1, u1);
       }
-      if (!(t1 > t0 + 0.8)) continue;
+      if (!(t1 > t0 + 1.0)) continue;
       let dmin = 1e9, right = 0;
-      for (let k = 0; k <= 12; k++) {
-        const t = t0 + (t1 - t0) * (0.1 + 0.8 * k / 12), x = cx + t * ex, y = cy + t * ey;
-        for (let n = 0; n < nN; n++) if (scr[n * 3 + 2]) { const ddx = x - scr[n * 3], ddy = y - scr[n * 3 + 1]; dmin = Math.min(dmin, ddx * ddx + ddy * ddy); }
+      for (let j = 0; j <= 14; j++) {
+        const t = t0 + (t1 - t0) * (0.06 + 0.88 * j / 14), x = cx + t * ex, y = cy + t * ey;
+        for (let n = 0; n < nN; n++) if (scr[n * 3 + 2]) {   // the star, and its label just below it
+          const ddx = x - scr[n * 3], ddy = y - scr[n * 3 + 1], ddl = ddy + 0.12; dmin = Math.min(dmin, ddx * ddx + Math.min(ddy * ddy, ddl * ddl));
+        }
+        // page furniture: the title (top left), the links (top right) and the hint line (bottom centre)
+        if ((x < -0.5 * asp && y > 0.7) || (x > 0.5 * asp && y > 0.74) || (Math.abs(x) < 0.75 * asp && y < -0.72)) dmin = Math.min(dmin, 0.01);
         if (x > 0.1 * asp) right++;
       }
-      const score = Math.min(Math.sqrt(dmin), 0.5) + 0.06 * Math.min(t1 - t0, 3) + (cy > 0 ? 0.05 : 0) - (card > 0.5 ? 0.04 * right : 0) + 0.04 * g(6);
+      const score = Math.min(Math.sqrt(dmin), 0.5) + 0.05 * Math.min(t1 - t0, 3) + (cy > 0 ? 0.04 : 0) - (card > 0.5 ? 0.04 * right : 0) + 0.04 * g(6);
       if (score > best) { best = score; qx = cx; qy = cy; dx = ex; dy = ey; s0 = t0; s1 = t1; }
     }
+    s1 += 0.45;   // leave past the edge so the tail sweeps out of frame instead of fading on screen
+    const bend = (hash3(7, k, 9) - 0.5) * 0.16, tm = (s0 + s1) / 2;
     rayAt((qx + s0 * dx) / asp, qy + s0 * dy, camera, cA);
     rayAt((qx + s1 * dx) / asp, qy + s1 * dy, camera, cB);
-    const base = Math.max(cC.length(), 20) + 45 + 85 * h(10);
-    let d0 = base * (0.82 + 0.36 * h(11)), d1 = base * (0.82 + 0.36 * h(12));
+    rayAt((qx + tm * dx - dy * bend) / asp, qy + tm * dy + dx * bend, camera, cM);
+    const base = Math.max(cC.length(), 20) + 50 + 90 * h(10);
+    let d0 = base * (0.85 + 0.3 * h(11)), d1 = base * (0.85 + 0.3 * h(12));
     for (let it = 0; it < 10; it++) {   // keep the whole path at least 60 units from the home star
-      st.p0.copy(cC).addScaledVector(cA, d0); cH.copy(cC).addScaledVector(cB, d1).sub(st.p0);
-      const L2 = Math.max(cH.lengthSq(), 1e-6), t = THREE.MathUtils.clamp(-st.p0.dot(cH) / L2, 0, 1);
-      if (cR.copy(st.p0).addScaledVector(cH, t).length() >= 60) break;
+      const dmid = (d0 + d1) / 2;
+      cst.p0.copy(cC).addScaledVector(cA, d0); cst.p1.copy(cC).addScaledVector(cB, d1); cH.copy(cC).addScaledVector(cM, dmid);
+      if (segDist(cst.p0, cH) >= 60 && segDist(cH, cst.p1) >= 60) break;
       d0 *= 1.2; d1 *= 1.2;
     }
-    st.dur = sl.dur; st.start = sl.start; st.vel.copy(cH).divideScalar(sl.dur); st.cam.copy(cC);
-    const dm = (d0 + d1) / 2;
-    st.comaR = dm * 0.0105; st.Ld = dm * (0.24 + 0.1 * h(13)); st.Li = st.Ld * (1.2 + 0.3 * h(14));
-    st.seed = h(15) * 10; st.gain = 0.8 + 0.35 * h(16); st.key = sl.k;
+    // quadratic Bezier through the middle point: control = 2*mid - (p0 + p1)/2
+    cst.pc.copy(cH).multiplyScalar(2).addScaledVector(cst.p0, -0.5).addScaledVector(cst.p1, -0.5);
+    cst.dur = sl.dur; cst.start = sl.start; cst.cam.copy(cC);
+    cst.dm = (d0 + d1) / 2; cst.Ld = cst.dm * (0.42 + 0.14 * h(13)); cst.Li = cst.Ld * (1.1 + 0.15 * h(14));
+    cst.seed = h(15) * 10; cst.gain = 0.85 + 0.3 * h(16); cst.key = k;
   }
   const safeNorm = (v, fb) => { const l = v.length(); return l > 1e-4 ? v.divideScalar(l) : v.copy(fb); };
   function updateComets(time, camera, card) {
-    let any = false;
-    for (let i = 0; i < lanes.length; i++) {
-      const st = lanes[i], Ln = COMET_LANES[i];
-      cometSlot(i, Math.floor((time - Ln.off) / Ln.P), slot);
-      const life = (time - slot.start) / slot.dur, head = cu.uHead.value[i];
-      if (!slot.on || !(life >= 0 && life <= 1)) { head.w = 0; continue; }
-      if (st.key !== slot.k) spawnComet(st, slot, camera, card);
-      cH.copy(st.p0).addScaledVector(st.vel, time - st.start);
-      // tail axes: away from the home star, bent toward -velocity, more so where the anti-sun axis would be
-      // foreshortened as seen from where the comet was first seen (fixed, so the tails do not swing with the camera)
-      cAnti.copy(cH).divideScalar(Math.max(cH.length(), 1e-3));
-      cVh.copy(st.vel).divideScalar(Math.max(st.vel.length(), 1e-6)).negate();
-      cR.copy(cH).sub(st.cam); cR.divideScalar(Math.max(cR.length(), 1e-3));
-      const ar = cAnti.dot(cR), fs = 1 - Math.sqrt(Math.max(0, 1 - ar * ar));   // 0 side-on .. 1 end-on
-      safeNorm(cIon.copy(cAnti).addScaledVector(cVh, 0.15 + 0.6 * fs), cVh);
-      safeNorm(cDust.copy(cAnti).multiplyScalar(0.55).addScaledVector(cVh, 0.9 + 0.9 * fs), cVh);
-      cLag.copy(cVh).addScaledVector(cDust, -cVh.dot(cDust));
-      if (cLag.lengthSq() < 1e-6) { cLag.copy(cIon).addScaledVector(cDust, -cIon.dot(cDust)).negate(); if (cLag.lengthSq() < 1e-6) cLag.set(0, 1, 0).cross(cDust); if (cLag.lengthSq() < 1e-6) cLag.set(1, 0, 0); }
-      cLag.normalize();
-      const vis = st.gain * THREE.MathUtils.smoothstep(life, 0, 0.14) * (1 - THREE.MathUtils.smoothstep(life, 0.84, 1));
-      head.set(cH.x, cH.y, cH.z, vis);
-      cu.uIon.value[i].set(cIon.x, cIon.y, cIon.z, st.Li);
-      cu.uDust.value[i].set(cDust.x, cDust.y, cDust.z, st.Ld);
-      cu.uLag.value[i].set(cLag.x, cLag.y, cLag.z, st.comaR);
-      cu.uSeedC.value[i] = st.seed;
-      any = any || vis > 1e-3;
-    }
-    comets.visible = any;
+    cometSlot(Math.floor(time / COMET_P), slot);
+    const life = (time - slot.start) / slot.dur, head = cu.uHead.value;
+    if (!slot.on || !(life >= 0 && life <= 1)) { head.w = 0; comets.visible = false; return; }
+    if (cst.key !== slot.k) spawnComet(slot, camera, card);
+    const t = life, it = 1 - t;
+    cH.copy(cst.p0).multiplyScalar(it * it).addScaledVector(cst.pc, 2 * t * it).addScaledVector(cst.p1, t * t);
+    cV.copy(cst.pc).sub(cst.p0).multiplyScalar(2 * it).addScaledVector(cR.copy(cst.p1).sub(cst.pc), 2 * t);   // d/dt
+    // tail axes: the dust tail away from the home star, bent toward -velocity (more so where the anti-sun axis
+    // would be foreshortened as seen from where the comet appeared: fixed, so the tails do not swing with the
+    // camera); the ion tail a few degrees off it, toward the anti-sun side
+    cAnti.copy(cH).divideScalar(Math.max(cH.length(), 1e-3));
+    cVh.copy(cV).divideScalar(Math.max(cV.length(), 1e-6)).negate();
+    cR.copy(cH).sub(cst.cam); cR.divideScalar(Math.max(cR.length(), 1e-3));
+    const ar = cAnti.dot(cR), fs = 1 - Math.sqrt(Math.max(0, 1 - ar * ar));   // 0 side-on .. 1 end-on
+    safeNorm(cDust.copy(cAnti).multiplyScalar(0.5).addScaledVector(cVh, 1.0 + 0.9 * fs), cVh);
+    cLag.copy(cAnti).addScaledVector(cDust, -cAnti.dot(cDust));   // toward the anti-sun side, across the dust axis
+    if (cLag.lengthSq() < 1e-6) { cLag.set(0, 1, 0).addScaledVector(cDust, -cDust.y); if (cLag.lengthSq() < 1e-6) cLag.set(1, 0, 0).addScaledVector(cDust, -cDust.x); }
+    cLag.normalize();
+    cIon.copy(cDust).addScaledVector(cLag, 0.3).normalize();      // ~17 degrees off the dust axis
+    cLag.negate();                                                // the dust tail curves away from the ion tail
+    const vis = cst.gain * THREE.MathUtils.smoothstep(life, 0, 0.12) * (1 - THREE.MathUtils.smoothstep(life, 0.86, 1));
+    head.set(cH.x, cH.y, cH.z, vis);
+    cu.uIon.value.set(cIon.x, cIon.y, cIon.z, cst.Li);
+    cu.uDust.value.set(cDust.x, cDust.y, cDust.z, cst.Ld);
+    cu.uLag.value.set(cLag.x, cLag.y, cLag.z, cst.dm);
+    cu.uSeedC.value = cst.seed;
+    comets.visible = vis > 1e-3;
   }
 
   // ----- meteors -----
@@ -1113,9 +1107,9 @@ export function createAmbient({ nodes = [] } = {}) {
   for (const m of mats) { m.uniforms.uCF = { value: 1 }; m.uniforms.uCard = { value: 0 }; if (!m.uniforms.uPixH) m.uniforms.uPixH = { value: 800 }; }
   const info = { drawCalls: group.children.length + soft.children.length, points };
   group.userData.info = info; group.userData.layout = L; group.userData.comets = {
-    // dev helper: the comets scheduled in [t0, t1] as { lane, start, dur }
-    schedule(t0, t1) { const out = []; COMET_LANES.forEach((Ln, i) => { for (let k = Math.floor((t0 - Ln.off) / Ln.P) - 1; k <= Math.floor((t1 - Ln.off) / Ln.P); k++) { const sl = cometSlot(i, k, {}); if (sl.on && sl.start + sl.dur >= t0 && sl.start <= t1) out.push({ lane: i, start: sl.start, dur: sl.dur }); } }); return out.sort((a, b) => a.start - b.start); },
-    heads: cu.uHead.value,
+    // dev helper: the comets scheduled in [t0, t1] as { start, dur }, and the live head (xyz, w visibility)
+    schedule(t0, t1) { const out = []; for (let k = Math.floor(t0 / COMET_P); k <= Math.floor(t1 / COMET_P); k++) { const sl = cometSlot(k, {}); if (sl.on && sl.start + sl.dur >= t0 && sl.start <= t1) out.push({ start: sl.start, dur: sl.dur }); } return out; },
+    head: cu.uHead.value,
   };
   return {
     group, info,
