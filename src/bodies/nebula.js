@@ -52,14 +52,14 @@ float field(vec3 p, float t, out float dust, out float shade){
   float g=lobe*(0.40+0.85*n);
   float soft=lobe*0.05*(1.0+n);
   // filaments in the outskirts: ridges of the gas noise where the lobes thin out
-  float fil=pow(1.0-abs(n1*0.75+n2*0.35),18.0)*smoothstep(0.02,0.22,lobe)*(1.0-smoothstep(0.35,0.9,lobe));
+  float fil=pow(max(1.0-abs(n1*0.75+n2*0.35),0.0),18.0)*smoothstep(0.02,0.22,lobe)*(1.0-smoothstep(0.35,0.9,lobe));
   soft+=fil*0.3;
   g=(max(g-0.16,0.0)+soft)*env*cav;
   // pillars: noise on the direction sphere, slowly varying with radius -> radial columns with eroded edges
   float pn=snoise(dir*2.1+vec3(r*0.45)+vec3(9.1,uSeed,-t*0.2))+0.22*n2;
   float pil=smoothstep(0.3,0.76,pn)*smoothstep(0.38,0.85,r);
   // thin lanes where the second octave crosses zero
-  float lane=pow(1.0-abs(n2),9.0)*smoothstep(0.15,0.5,lobe);
+  float lane=pow(max(1.0-abs(n2),0.0),9.0)*smoothstep(0.15,0.5,lobe);
   dust=(pil*1.7+lane*0.7)*env*smoothstep(0.2,0.6,lobe);
   shade=n;
   return g;

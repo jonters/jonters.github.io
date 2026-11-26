@@ -303,8 +303,8 @@ void main(){
       return;
     }
     float dens=smoothstep(-0.05,0.85,0.28+0.45*b+0.4*n+0.2*m);
-    float ridge=pow(1.0-abs(m),6.0)*smoothstep(0.1,0.6,dens);
-    float wisp=pow(1.0-abs(n),4.0)*0.5*dens;
+    float ridge=pow(max(1.0-abs(m),0.0),6.0)*smoothstep(0.1,0.6,dens);
+    float wisp=pow(max(1.0-abs(n),0.0),4.0)*0.5*dens;
     gl_FragColor=vec4(vCol*f*(dens*dens*1.5+ridge*1.5+wisp)*1.25,0.0);
     return;
   }
@@ -315,8 +315,8 @@ void main(){
     float m=snoise(vec3(vQ*2.7+n*0.9+seed*2.3,seed+t*1.3));
     float k=snoise(vec3(vQ*6.5+m*0.7,seed*1.7-t));
     float dens=smoothstep(0.0,0.95,0.42+0.5*n+0.3*m-0.95*r2);
-    float ridge=pow(1.0-abs(m),7.0)*smoothstep(0.05,0.5,dens+0.25*n);
-    float wisp=pow(1.0-abs(k),5.0)*smoothstep(0.1,0.6,dens);
+    float ridge=pow(max(1.0-abs(m),0.0),7.0)*smoothstep(0.05,0.5,dens+0.25*n);
+    float wisp=pow(max(1.0-abs(k),0.0),5.0)*smoothstep(0.1,0.6,dens);
     v=f*(dens*dens*0.9+ridge*0.9+wisp*0.35)*(0.8+0.3*k)*2.6;
   } else if(type<1.5){
     // glow: halo + core
@@ -475,8 +475,8 @@ void main(){
   float mu=abs(dot(N,V));
   float edge=min(1.0/(mu+0.3),2.8)*0.3;          // a thin shell is brightest where the line of sight grazes it
   vec3 p=d*5.2+uSeed+vLow.x*0.55;
-  float r1=1.0-abs(snoise(p+vec3(0.0,uTime*0.004,0.0)));
-  float r2=1.0-abs(snoise(p*2.7+vLow.x));
+  float r1=max(1.0-abs(snoise(p+vec3(0.0,uTime*0.004,0.0))),0.0);
+  float r2=max(1.0-abs(snoise(p*2.7+vLow.x)),0.0);
   float lace=pow(r1,8.0)+0.5*pow(r2,10.0)*r1+0.09*r1*r1;
   vec3 c=mix(uColA,uColB,smoothstep(-0.35,0.35,vLow.z+0.4*(r2-0.5)));
   float dist=distance(cameraPosition,vW);
@@ -857,7 +857,7 @@ export function createAmbient({ nodes = [] } = {}) {
     const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, generateMipmaps: false });
     const mat = new THREE.ShaderMaterial({ uniforms: { tSoft: { value: rt.texture } },
       vertexShader: `varying vec2 vUv; void main(){ vUv=position.xy*0.5+0.5; gl_Position=vec4(position.xy,1.0,1.0); }`,
-      fragmentShader: `uniform sampler2D tSoft; varying vec2 vUv; void main(){ gl_FragColor=texture2D(tSoft,vUv); }`,
+      fragmentShader: `uniform sampler2D tSoft; varying vec2 vUv; void main(){ vec4 c=texture2D(tSoft,vUv); if(!(c.r+c.g+c.b+c.a<1.0e5)) c=vec4(0.0); gl_FragColor=vec4(max(c.rgb,0.0),clamp(c.a,0.0,1.0)); }`,
       transparent: true, depthWrite: false, depthTest: true,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor });
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat); quad.frustumCulled = false; quad.renderOrder = -6;

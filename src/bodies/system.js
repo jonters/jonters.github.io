@@ -114,8 +114,8 @@ void main(){
     vec3 q=p*2.2+seed;
     vec3 w=q+vec3(fbm3(q*1.3),fbm3(q*1.3+5.2),fbm3(q*1.3+9.7))*0.45;
     float n=fbm(w*1.6);
-    float cr=pow(1.0-abs(snoise(w*2.0)),10.0);
-    float cr2=pow(1.0-abs(snoise(w*4.0+11.0)),26.0)*0.25*smoothstep(0.0,0.4,n+0.2);
+    float cr=pow(max(1.0-abs(snoise(w*2.0)),0.0),10.0);
+    float cr2=pow(max(1.0-abs(snoise(w*4.0+11.0)),0.0),26.0)*0.25*smoothstep(0.0,0.4,n+0.2);
     float pool=smoothstep(0.12,0.4,fbm3(q*0.7+vec3(5.0,0.0,uTime*0.01)));
     float crust=smoothstep(-0.1,0.5,snoise(w*9.0+uTime*0.02));
     float heat=clamp(max(cr+cr2,pool*mix(1.0,0.35,crust)),0.0,1.0);

@@ -27,8 +27,8 @@ void main(){
   vec3 p=n*2.2+uSeed;
   // magnetar crust: ridged cracks with hot plasma flowing in them
   float w=fbm3(p*1.3+vec3(0.0,t*0.15,0.0));
-  float r1=1.0-abs(snoise(p*2.2+w*0.8+vec3(t*0.05)));
-  float r2=1.0-abs(snoise(p*5.0-w+vec3(0.0,-t*0.1,0.0)));
+  float r1=max(1.0-abs(snoise(p*2.2+w*0.8+vec3(t*0.05))),0.0);
+  float r2=max(1.0-abs(snoise(p*5.0-w+vec3(0.0,-t*0.1,0.0))),0.0);
   float cracks=pow(r1,6.0)*0.8+pow(r2,8.0)*0.5;
   float gran=snoise(p*9.0+vec3(t*0.4))*0.5+0.5;
   float cap=smoothstep(0.72,0.97,abs(n.y));                 // hot polar caps at the magnetic poles
