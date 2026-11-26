@@ -44,6 +44,7 @@ float centerFadeK(vec3 wp,float k){
   return mix(1.0,mix(0.14,1.0,smoothstep(0.5,1.0,e))*card,uCF);
 }
 float centerFade(vec3 wp){ return centerFadeK(wp,1.0); }`;
+const SOFT_SCALE = 0.5; // resolution of the soft (gas, dust, shell) layer relative to the frame
 const additive = { transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending };
 
 // ---------- layout (az radians in the rig's convention, horizontal distance, height) ----------
@@ -93,8 +94,9 @@ void main(){ vec2 c=gl_PointCoord*2.0-1.0; float r2=dot(c,c); if(r2>1.0) discard
 function makeGalaxy(o) {
   const r = rng(o.seed);
   const R = 1; // built in unit radius, scaled by the object
-  const P = [], D = [], C = [];
-  const push = (x, y, z, size, b, kind, c) => { P.push(x, y, z); D.push(size, b, r() * 10, kind); C.push(c.r, c.g, c.b); };
+  const cap = o.nStars + o.nDiffuse + o.nKnots * 12 + o.nBulge;   // knots hold at most 12 points each
+  const P = new Float32Array(cap * 3), D = new Float32Array(cap * 4), C = new Float32Array(cap * 3); let N = 0;
+  const push = (x, y, z, size, b, kind, c) => { const a = N * 3, d = N * 4; P[a] = x; P[a + 1] = y; P[a + 2] = z; D[d] = size; D[d + 1] = b; D[d + 2] = r() * 10; D[d + 3] = kind; C[a] = c.r; C[a + 1] = c.g; C[a + 2] = c.b; N++; };
   const m = o.arms, tp = Math.tan(o.pitch), r0 = 0.12, rb = o.bulge;
   const wrap = x => Math.atan2(Math.sin(x), Math.cos(x));
   const armPhase = (rad, th) => m * (th - Math.log(Math.max(rad, 0.02) / r0) / tp);
@@ -159,15 +161,15 @@ function makeGalaxy(o) {
     push(v.x, v.y, v.z, 0.006 + r() * 0.006, 0.55 + 0.6 * (1 - s), 3, tmp);
   }
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-  g.setAttribute('aData', new THREE.Float32BufferAttribute(D, 4));
-  g.setAttribute('aColor', new THREE.Float32BufferAttribute(C, 3));
+  g.setAttribute('position', new THREE.BufferAttribute(P.subarray(0, N * 3), 3));
+  g.setAttribute('aData', new THREE.BufferAttribute(D.subarray(0, N * 4), 4));
+  g.setAttribute('aColor', new THREE.BufferAttribute(C.subarray(0, N * 3), 3));
   const mat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uPixH: { value: 800 }, uGain: { value: o.gain }, uSpin: { value: o.spin } }, vertexShader: galVert, fragmentShader: galFrag, ...additive });
   const pts = new THREE.Points(g, mat);
   pts.frustumCulled = false;
   pts.position.copy(o.pos); pts.quaternion.copy(diskQuat(o.pos, o.incl, o.pa)); pts.scale.setScalar(o.R);
   pts.renderOrder = -5;
-  return { pts, mat, count: P.length / 3 };
+  return { pts, mat, count: N };
 }
 
 // Galaxy disks: the unresolved light as a world-space quad in each disk plane: log-spiral arms that turn with
@@ -368,7 +370,8 @@ function createSprites() {
       g.setAttribute('iParam', new THREE.InstancedBufferAttribute(pr, 4));
       g.instanceCount = n;
       const mat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 } }, vertexShader: spriteVert, fragmentShader: spriteFrag, transparent: true, depthWrite: false, depthTest: true,
-        blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor });
+        // premultiplied 'over' into the soft layer's target: rgb = src + dst*(1-a), and alpha collects the absorption
+        blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor });
       const mesh = new THREE.Mesh(g, mat); mesh.frustumCulled = false; mesh.renderOrder = -6;
       return { mesh, mat, count: n };
     },
@@ -707,6 +710,7 @@ export function createAmbient({ nodes = [] } = {}) {
   const group = new THREE.Group();
   group.name = 'ambient';
   const mats = [];
+  const soft = new THREE.Scene(); // rendered at reduced resolution, see 'soft layer' below
   let points = 0;
 
   // keep-out test used for any scattered thing near the graph
@@ -735,10 +739,11 @@ export function createAmbient({ nodes = [] } = {}) {
   {
     const c = at(5.3, 130, 10), R = 190;
     const mat = new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 }, uSeed: { value: 4.7 }, uGain: { value: 0.3 }, uCenter: { value: c }, uColA: { value: col('#35c9c2') }, uColB: { value: col('#e0507a') } },
-      vertexShader: shellVert, fragmentShader: shellFrag, ...additive, side: THREE.DoubleSide });
+      vertexShader: shellVert, fragmentShader: shellFrag, transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor });
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 48), mat);
     mesh.position.copy(c); mesh.scale.setScalar(R); mesh.rotation.set(0.4, 1.1, 0.2); mesh.frustumCulled = false; mesh.renderOrder = -6.5;
-    group.add(mesh); mats.push(mat);
+    soft.add(mesh); mats.push(mat);
   }
 
   // ----- sprites: nebulae, filaments, glows -----
@@ -842,7 +847,33 @@ export function createAmbient({ nodes = [] } = {}) {
     S.add(p, col(i % 2 ? '#c98a4a' : '#9a7a6a', 0.06), 0, 2, 50 + i * 3.1, 0, 0, tng, nrm);
   }
   const sprites = S.build();
-  group.add(sprites.mesh); mats.push(sprites.mat);
+  soft.add(sprites.mesh); mats.push(sprites.mat);
+
+  // ----- soft layer: the shell and all the gas/dust sprites are smooth, noise-heavy and cover most of the screen,
+  // so they render into a half-resolution target (a quarter of the fragment work) and one full-screen quad lays
+  // that over the scene. The quad sits at the far plane with the depth test on, so the bodies still occlude it;
+  // its alpha carries the dust's absorption of whatever is behind the layer (sky and far stars).
+  {
+    const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false, generateMipmaps: false });
+    const mat = new THREE.ShaderMaterial({ uniforms: { tSoft: { value: rt.texture } },
+      vertexShader: `varying vec2 vUv; void main(){ vUv=position.xy*0.5+0.5; gl_Position=vec4(position.xy,1.0,1.0); }`,
+      fragmentShader: `uniform sampler2D tSoft; varying vec2 vUv; void main(){ gl_FragColor=texture2D(tSoft,vUv); }`,
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat); quad.frustumCulled = false; quad.renderOrder = -6;
+    const size = new THREE.Vector2(), cc = new THREE.Color();
+    quad.onBeforeRender = (renderer, _scene, cam) => {
+      const cur = renderer.getRenderTarget();
+      if (cur) size.set(cur.width, cur.height); else renderer.getDrawingBufferSize(size);
+      const w = Math.max(2, Math.ceil(size.x * SOFT_SCALE)), h = Math.max(2, Math.ceil(size.y * SOFT_SCALE));
+      if (rt.width !== w || rt.height !== h) rt.setSize(w, h);
+      renderer.getClearColor(cc); const ca = renderer.getClearAlpha(), ac = renderer.autoClear;
+      renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.autoClear = true;
+      renderer.render(soft, cam);
+      renderer.setRenderTarget(cur); renderer.setClearColor(cc, ca); renderer.autoClear = ac;
+    };
+    group.add(quad);
+  }
 
   // ----- point stars -----
   {
@@ -948,7 +979,7 @@ export function createAmbient({ nodes = [] } = {}) {
 
   const tmpP = V3(), tmpV = V3();
   for (const m of mats) { m.uniforms.uCF = { value: 1 }; m.uniforms.uCard = { value: 0 }; if (!m.uniforms.uPixH) m.uniforms.uPixH = { value: 800 }; }
-  const info = { drawCalls: group.children.length, points };
+  const info = { drawCalls: group.children.length + soft.children.length, points };
   group.userData.info = info; group.userData.layout = L; group.userData.cometHeads = cu.uHead.value;
   return {
     group, info,
