@@ -30,6 +30,7 @@ const FinalShader = {
       } else {
         col=vec3(texture2D(tDiffuse,uv+dir).r,texture2D(tDiffuse,uv).g,texture2D(tDiffuse,uv-dir).b);
       }
+      if(!(col.r+col.g+col.b<1.0e6)) col=vec3(0.0);   // non-finite pixel: see the bloom guard
       col*=mix(1.0,smoothstep(0.95,0.18,sqrt(r2)),uVignette);
       col+=(h(vUv*vec2(1920.0,1080.0)+fract(uTime)*731.0)-0.5)*uGrain*(0.4+col.g);
       col+=uFlash*mix(uFlashCol*2.2,vec3(4.0),exp(-length(cw)*3.2));
@@ -49,6 +50,11 @@ export function createPost(renderer, scene, camera) {
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.85, 0.75, 0.82);
   composer.addPass(bloom);
+  // A single non-finite pixel (a shader hitting pow/sqrt/divide edge cases on some GPUs) would be smeared by the bloom
+  // blur chain into a large black square. Drop such pixels before they enter it.
+  const hp = bloom.materialHighPassFilter;
+  hp.fragmentShader = hp.fragmentShader.replace('vec4 texel = texture2D( tDiffuse, vUv );', 'vec4 texel = texture2D( tDiffuse, vUv ); if(!(texel.r+texel.g+texel.b<1.0e6)) texel=vec4(0.0,0.0,0.0,1.0); texel.rgb=clamp(texel.rgb,0.0,256.0);');
+  if (!hp.fragmentShader.includes('1.0e6')) console.warn('bloom guard not applied'); hp.needsUpdate = true;
   const final = new ShaderPass(FinalShader);
   // Last pass, drawn straight to the canvas. No swap afterwards, so the scene always renders into the same target and
   // the composer's second full-size target is never allocated.

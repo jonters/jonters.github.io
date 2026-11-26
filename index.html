@@ -51,7 +51,6 @@
       <span class="mark"></span>
       <span class="who">Johnny Liu</span>
     </button>
-    <span class="sub">Astral index · v0</span>
   </header>
   <nav id="links">
     <a href="https://github.com/jonters" target="_blank" rel="noopener">GitHub</a>
@@ -64,8 +63,11 @@
     <h1></h1>
     <p class="desc"></p>
     <dl class="data"></dl>
-    <div class="chips"></div>
-    <button id="enter"><span>Enter</span><i aria-hidden="true">↗</i></button>
+    <nav class="tree" aria-label="Connected stars">
+      <div class="grp up"><span class="lab">Back to</span><div class="chips"></div></div>
+      <div class="grp down"><span class="lab">Leads to</span><div class="chips"></div></div>
+    </nav>
+    <button id="enter" hidden><span>Open</span><i aria-hidden="true">↗</i></button>
   </aside>
 
   <footer id="foot">

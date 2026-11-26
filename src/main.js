@@ -76,9 +76,10 @@ function path(id) { const out = []; for (let n = byId[id]; n; n = byId[n.parent]
 
 function renderCrumbs() {
   crumbs.textContent = '';
-  const add = (text, id) => { const b = document.createElement('button'); b.textContent = text; b.onclick = () => focus(id); crumbs.appendChild(b); };
-  add('Map', null);
-  if (state.focus) for (const n of path(state.focus)) { const s = document.createElement('i'); s.textContent = '/'; crumbs.appendChild(s); add(n.title, n.id); }
+  const add = (text, id, cls) => { const b = document.createElement('button'); b.textContent = text; if (cls) b.className = cls; b.onclick = () => focus(id); crumbs.appendChild(b); return b; };
+  const top = add(state.focus ? '← Full map' : 'Full map', null, 'top'); top.title = 'Back to the whole map';
+  crumbs.classList.toggle('at-top', !state.focus);
+  if (state.focus) { const ps = path(state.focus); ps.forEach((n, i) => { const s = document.createElement('i'); s.textContent = '›'; crumbs.appendChild(s); const b = add(n.title, n.id, i === ps.length - 1 ? 'here' : ''); b.style.setProperty('--c', n.color); if (i === ps.length - 1) b.setAttribute('aria-current', 'location'); }); }
 }
 
 const kicker = n => { const no = String(NODES.indexOf(n)).padStart(2, '0'); return n.depth === 0 ? 'Start here' : n.depth === 1 ? `Section ${no}` : `${byId[n.parent].title} / ${no}`; };
@@ -93,9 +94,13 @@ function renderCard(n) {
   for (const [k, v] of rows) { const dt_ = document.createElement('dt'), dd = document.createElement('dd'); dt_.textContent = k; dd.textContent = v; dl.append(dt_, dd); }
   const h = card.querySelector('h1'); h.textContent = n.title; h.classList.toggle('long', n.title.length > 7);
   card.querySelector('.desc').textContent = n.desc;
-  const chips = card.querySelector('.chips'); chips.textContent = '';
-  for (const c of childrenOf(n.id)) { const b = document.createElement('button'); b.textContent = c.title; b.style.setProperty('--c', c.color); b.onclick = () => focus(c.id); b.onpointerenter = () => { state.hover = c.id; }; b.onpointerleave = () => { state.hover = null; }; chips.appendChild(b); }
-  $('#enter span').textContent = n.href ? 'Open' : 'Enter';
+  const link = (c, text) => { const b = document.createElement('button'); b.textContent = text; b.style.setProperty('--c', c ? c.color : 'var(--ink)'); b.onclick = () => focus(c ? c.id : null); if (c) { b.onpointerenter = () => { state.hover = c.id; }; b.onpointerleave = () => { state.hover = null; }; } return b; };
+  const par = byId[n.parent], kidsL = childrenOf(n.id);
+  const up = card.querySelector('.up .chips'); up.textContent = ''; up.appendChild(link(par || null, par ? par.title : 'Full map'));
+  const down = card.querySelector('.down'), chips = down.querySelector('.chips'); chips.textContent = ''; down.hidden = !kidsL.length;
+  down.querySelector('.lab').textContent = `Leads to · ${kidsL.length}`;
+  for (const c of kidsL) chips.appendChild(link(c, c.title));
+  $('#enter').hidden = !n.href;
   requestAnimationFrame(measure);
 }
 
@@ -146,7 +151,7 @@ function focus(id, { instant = false, silent = false } = {}) {
 }
 
 function enter() {
-  const n = byId[state.focus]; if (!n || state.mode !== 'space') return;
+  const n = byId[state.focus]; if (!n || !n.href || state.mode !== 'space') return; // only stars with a real page open, for now
   state.mode = 'diving'; state.cardPending = null; card.classList.remove('open'); body.classList.add('inside'); state.shiftGoal.set(0, 0);
   const dir = camera.position.clone().sub(n.p).normalize();
   rig.flyTo(n.p, n.p.clone().addScaledVector(dir, Math.max(0.12, n.pickR * 0.2)), reduced ? 0.5 : 1.35, { kind: 'dive', onDone: () => {
@@ -362,7 +367,7 @@ function frame(now) {
   const h = state.hover && byId[state.hover];
   if (h && state.mode === 'space') {
     const size = Math.max(52, Math.min(h.sr, 170) * 2 + 26), rs = reticle.style;
-    const sz = size + 'px', tf = `translate3d(${(h.sx - size / 2).toFixed(1)}px,${(h.sy - size / 2).toFixed(1)}px,0)`, txt = h.id === state.focus ? (h.href ? 'Open' : 'Enter') : 'Focus';
+    const sz = size + 'px', tf = `translate3d(${(h.sx - size / 2).toFixed(1)}px,${(h.sy - size / 2).toFixed(1)}px,0)`, txt = h.id === state.focus ? (h.href ? 'Open' : '') : 'Focus';
     if (sz !== ret.sz) { rs.width = rs.height = ret.sz = sz; }
     if (tf !== ret.tf) rs.transform = ret.tf = tf;
     if (h.color !== ret.c) rs.setProperty('--c', ret.c = h.color);
