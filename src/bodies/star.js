@@ -71,18 +71,47 @@ void main(){
   gl_FragColor=vec4(col*uIntensity,1.0);
 }`;
 
+// ---- level of detail for sphere meshes ----
+// A 64x48 UV sphere is ~6k triangles. A few dozen pixels across, most of them are smaller than a pixel, and the GPU
+// shades whole 2x2 pixel quads per triangle, so an expensive surface shader runs several times per covered pixel.
+// Each level is used while the sphere's projected radius stays below `px`, chosen so the polygon outline stays within
+// ~0.3 px of the true circle (radius * (1 - cos(pi / segments))). Shared unit spheres; meshes scale them.
+const lodCache = new Map();
+export function unitSphere(w, h) { const k = w + 'x' + h; if (!lodCache.has(k)) lodCache.set(k, new THREE.SphereGeometry(1, w, h)); return lodCache.get(k); }
+export const SPHERE_LODS = [{ px: 14, w: 16, h: 12 }, { px: 60, w: 32, h: 24 }, { px: Infinity, w: 64, h: 48 }];
+let viewH = 1080; // drawing-buffer height, refreshed whenever a star renders
+const _wp = new THREE.Vector3(), _cp = new THREE.Vector3(), _vh = new THREE.Vector2();
+export const noteViewH = renderer => { viewH = renderer.getDrawingBufferSize(_vh).y || viewH; };
+// projected radius in pixels of a sphere of world radius r centred on obj's world position
+export function projectedPx(obj, r, camera) {
+  const d = _cp.setFromMatrixPosition(camera.matrixWorld).distanceTo(obj.getWorldPosition(_wp));
+  return d <= r ? Infinity : r / Math.sqrt(d * d - r * r) * viewH / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+}
+// index into `lods` for a projected radius, with 15% hysteresis so a sphere at a boundary does not flip every frame
+export function lodIndex(lods, px, cur) {
+  let i = 0; while (i < lods.length - 1 && px > lods[i].px) i++;
+  if (cur !== undefined && i < cur && px > lods[i].px / 1.15) i = cur;
+  return i;
+}
+
 export function create(opts = {}) {
   const o = { color: '#ffb061', radius: 1, intensity: 1, speed: 1, corona: 1, spikes: 0.5, seed: 1, ...opts };
   const group = new THREE.Group();
   const color = new THREE.Color(o.color);
   const u = () => ({ uTime: { value: 0 }, uIntensity: { value: o.intensity }, uSeed: { value: o.seed * 7.31 }, uColor: { value: color } });
 
-  const surface = new THREE.Mesh(new THREE.SphereGeometry(o.radius, 64, 48), new THREE.ShaderMaterial({ uniforms: u(), vertexShader: surfaceVert, fragmentShader: surfaceFrag }));
+  // surface and shell: unit spheres scaled to size (the shaders only use normalised positions and normals), with the
+  // tessellation picked per frame from the projected size (see SPHERE_LODS); the full 64x48 mesh close up
+  const surface = new THREE.Mesh(unitSphere(64, 48), new THREE.ShaderMaterial({ uniforms: u(), vertexShader: surfaceVert, fragmentShader: surfaceFrag }));
+  surface.scale.setScalar(o.radius); surface.onBeforeRender = noteViewH;
   group.add(surface);
 
-  const shell = new THREE.Mesh(new THREE.SphereGeometry(o.radius * 1.22, 48, 32), new THREE.ShaderMaterial({
+  const shell = new THREE.Mesh(unitSphere(48, 32), new THREE.ShaderMaterial({
     uniforms: u(), vertexShader: shellVert, fragmentShader: shellFrag, side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
+  shell.scale.setScalar(o.radius * 1.22);
   group.add(shell);
+  const SHELL_LODS = [SPHERE_LODS[0], SPHERE_LODS[1], { px: Infinity, w: 48, h: 32 }]; // its full detail was 48x32
+  let lodS, lodH;
 
   const size = o.radius * 6.5;
   const corona = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
@@ -94,6 +123,13 @@ export function create(opts = {}) {
   const mats = [surface.material, shell.material, corona.material];
   return {
     group, radius: o.radius, materials: mats,
-    update(time) { for (const m of mats) m.uniforms.uTime.value = time * o.speed; },
+    update(time, dt, camera) {
+      for (const m of mats) m.uniforms.uTime.value = time * o.speed;
+      if (camera) {
+        const px = projectedPx(surface, o.radius, camera);
+        const i = lodIndex(SPHERE_LODS, px, lodS); if (i !== lodS) { lodS = i; surface.geometry = unitSphere(SPHERE_LODS[i].w, SPHERE_LODS[i].h); }
+        const j = lodIndex(SHELL_LODS, px * 1.22, lodH); if (j !== lodH) { lodH = j; shell.geometry = unitSphere(SHELL_LODS[j].w, SHELL_LODS[j].h); }
+      }
+    },
   };
 }

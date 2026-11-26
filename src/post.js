@@ -4,7 +4,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const FinalShader = {
   uniforms: {
@@ -35,6 +34,11 @@ const FinalShader = {
       col+=(h(vUv*vec2(1920.0,1080.0)+fract(uTime)*731.0)-0.5)*uGrain*(0.4+col.g);
       col+=uFlash*mix(uFlashCol*2.2,vec3(4.0),exp(-length(cw)*3.2));
       gl_FragColor=vec4(max(col,0.0),1.0);
+      // Tone mapping + sRGB here instead of in a separate OutputPass: when this pass draws to the screen three
+      // defines TONE_MAPPING / the sRGB output encoding, so this is the same maths minus one full-screen pass and
+      // one half-float render target. (Into a render target both chunks are no-ops, as before.)
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
     }`,
 };
 
@@ -46,8 +50,10 @@ export function createPost(renderer, scene, camera) {
   const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.85, 0.75, 0.82);
   composer.addPass(bloom);
   const final = new ShaderPass(FinalShader);
+  // Last pass, drawn straight to the canvas. No swap afterwards, so the scene always renders into the same target and
+  // the composer's second full-size target is never allocated.
+  final.needsSwap = false;
   composer.addPass(final);
-  composer.addPass(new OutputPass());
   return {
     composer, bloom, final,
     setSize(w, h) { composer.setSize(w, h); },

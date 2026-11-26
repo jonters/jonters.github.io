@@ -5,7 +5,7 @@
 // Draw calls: star (3) + planets/moons (1, instanced) + atmosphere halos (1, instanced) + ring (1) + orbits (1) + belt (1).
 import * as THREE from 'three';
 import { NOISE } from '../glsl.js';
-import { create as createStar } from './star.js';
+import { create as createStar, lodIndex } from './star.js';
 
 const NB = 8; // bodies: 0 lava, 1 rocky, 2 ocean, 3 gas giant, 4 ice giant, 5-7 moons
 const NP = 5; // planets (the ones with atmosphere halos)
@@ -451,14 +451,21 @@ export function create(opts = {}) {
   const _v2 = new THREE.Vector2();
 
   // ------------------------------------------------ planets + moons (one instanced draw)
-  const sph = new THREE.SphereGeometry(1, 96, 64);
-  const pGeo = new THREE.InstancedBufferGeometry().copy(sph); pGeo.instanceCount = NB;
+  // Tessellation follows the projected size of the biggest world (see update): at the default view the worlds are a
+  // few dozen pixels across and a 96x64 sphere is mostly sub-pixel triangles (each shades a whole 2x2 pixel quad).
+  // Levels keep the polygon outline within ~0.2 px of the circle; the full mesh is used close up.
+  const inst = (w, h, n, r = 1) => { const g = new THREE.InstancedBufferGeometry().copy(new THREE.SphereGeometry(r, w, h)); g.instanceCount = n; return g; };
+  const PLANET_LODS = [{ px: 25, g: inst(24, 16, NB) }, { px: 100, g: inst(48, 32, NB) }, { px: Infinity, g: inst(96, 64, NB) }];
+  // halos are ray-analytic (the mesh only has to cover the halo radius): coarse levels circumscribe it
+  const HALO_LODS = [{ px: 25, g: inst(24, 16, NP, 1.02) }, { px: Infinity, g: inst(48, 32, NP) }];
+  let lodP, lodH;
+  const pGeo = PLANET_LODS[2].g;
   const planets = new THREE.Mesh(pGeo, new THREE.ShaderMaterial({ uniforms: U, vertexShader: planetVert, fragmentShader: planetFrag }));
   planets.frustumCulled = false; planets.onBeforeRender = setViewH;
   group.add(planets);
 
   // ------------------------------------------------ atmosphere halos
-  const hGeo = new THREE.InstancedBufferGeometry().copy(new THREE.SphereGeometry(1, 48, 32)); hGeo.instanceCount = NP;
+  const hGeo = HALO_LODS[1].g;
   const halos = new THREE.Mesh(hGeo, new THREE.ShaderMaterial({
     uniforms: U, vertexShader: haloVert, fragmentShader: haloFrag, side: THREE.BackSide,
     blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
@@ -570,6 +577,11 @@ export function create(opts = {}) {
       group.updateWorldMatrix(true, false);
       inv.copy(group.matrixWorld).invert();
       U.uCam.value.copy(camera.getWorldPosition(cp)).applyMatrix4(inv);
+      // nearest any world can be: the camera's distance to the centre less the outermost orbit (local units)
+      const near = U.uCam.value.length() * group.matrixWorld.getMaxScaleOnAxis() - 4.8;
+      const px = near > 0.3 ? 0.29 / near * viewH.value / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)) : Infinity;
+      const i = lodIndex(PLANET_LODS, px, lodP); if (i !== lodP) { lodP = i; planets.geometry = PLANET_LODS[i].g; }
+      const j = lodIndex(HALO_LODS, px * 1.2, lodH); if (j !== lodH) { lodH = j; halos.geometry = HALO_LODS[j].g; }
     }
   }
   update(0, 0, null);

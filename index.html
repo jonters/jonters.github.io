@@ -11,6 +11,31 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Unbounded:wght@300;500;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="src/style.css">
   <script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/":"./vendor/addons/"}}</script>
+  <!-- The whole module graph, so the browser fetches it in parallel instead of discovering it one import level (and,
+       for the bodies and ambient layer, one start-up step) at a time. Keep in sync with the imports. -->
+  <link rel="modulepreload" href="vendor/three.module.min.js">
+  <link rel="modulepreload" href="src/main.js">
+  <link rel="modulepreload" href="src/post.js">
+  <link rel="modulepreload" href="src/graph.js">
+  <link rel="modulepreload" href="src/sky.js">
+  <link rel="modulepreload" href="src/edges.js">
+  <link rel="modulepreload" href="src/chart.js">
+  <link rel="modulepreload" href="src/rig.js">
+  <link rel="modulepreload" href="src/glsl.js">
+  <link rel="modulepreload" href="vendor/addons/postprocessing/EffectComposer.js">
+  <link rel="modulepreload" href="vendor/addons/postprocessing/RenderPass.js">
+  <link rel="modulepreload" href="vendor/addons/postprocessing/UnrealBloomPass.js">
+  <link rel="modulepreload" href="vendor/addons/postprocessing/ShaderPass.js">
+  <link rel="modulepreload" href="vendor/addons/postprocessing/MaskPass.js">
+  <link rel="modulepreload" href="vendor/addons/postprocessing/Pass.js">
+  <link rel="modulepreload" href="vendor/addons/shaders/CopyShader.js">
+  <link rel="modulepreload" href="vendor/addons/shaders/LuminosityHighPassShader.js">
+  <link rel="modulepreload" href="src/bodies/star.js">
+  <link rel="modulepreload" href="src/bodies/system.js">
+  <link rel="modulepreload" href="src/bodies/blackhole.js">
+  <link rel="modulepreload" href="src/bodies/pulsar.js">
+  <link rel="modulepreload" href="src/bodies/nebula.js">
+  <link rel="modulepreload" href="src/ambient.js">
 </head>
 <body class="booting">
   <canvas id="scene" aria-label="Interactive 3D star map of this site"></canvas>

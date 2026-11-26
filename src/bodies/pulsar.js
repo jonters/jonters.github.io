@@ -5,6 +5,7 @@
 //          coreColor, beamColor, fieldColor, accentColor }) -> { group, radius, update(time, dt, camera) }
 import * as THREE from 'three';
 import { NOISE } from '../glsl.js';
+import { unitSphere, SPHERE_LODS, projectedPx, lodIndex, noteViewH } from './star.js';
 
 function rng(seed) {
   let a = (seed * 2654435761) >>> 0 || 1;
@@ -376,10 +377,13 @@ export function create(opts = {}) {
   const omega = Math.PI * 2 / o.period;
   const additive = { blending: THREE.AdditiveBlending, transparent: true, depthWrite: false };
 
-  const core = new THREE.Mesh(new THREE.SphereGeometry(CORE_R, 64, 40), new THREE.ShaderMaterial({
+  // unit sphere scaled to CORE_R (the shader only uses the normalised position), tessellation by projected size
+  const CORE_LODS = [SPHERE_LODS[0], SPHERE_LODS[1], { px: Infinity, w: 64, h: 40 }]; let coreLod;
+  const core = new THREE.Mesh(unitSphere(64, 40), new THREE.ShaderMaterial({
     uniforms: { uTime, uSeed, uIntensity: { value: o.intensity }, uCore, uBeam }, vertexShader: coreVert, fragmentShader: coreFrag }));
+  core.scale.setScalar(CORE_R);
   mag.add(core);
-  core.onBeforeRender = (renderer) => { uResY.value = renderer.getDrawingBufferSize(_v2).y || 900; };
+  core.onBeforeRender = (renderer) => { uResY.value = renderer.getDrawingBufferSize(_v2).y || 900; noteViewH(renderer); };
 
   const glowSize = 2.4;
   const glowMat = new THREE.ShaderMaterial({
@@ -424,6 +428,8 @@ export function create(opts = {}) {
       spin.rotation.y = omega * time;
       group.updateWorldMatrix(true, true);
       if (camera) {
+        const li = lodIndex(CORE_LODS, projectedPx(core, CORE_R, camera), coreLod);
+        if (li !== coreLod) { coreLod = li; core.geometry = unitSphere(CORE_LODS[li].w, CORE_LODS[li].h); }
         camera.updateMatrixWorld();
         _cam.setFromMatrixPosition(camera.matrixWorld);
         _inv.copy(beams.matrixWorld).invert();

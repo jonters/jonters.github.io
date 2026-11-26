@@ -24,7 +24,7 @@ const rig = new Rig(camera);
 const veil = (p, label) => { try { window.__veil && window.__veil(p, label); } catch (e) { /* no veil */ } };
 const paint = () => new Promise(r => requestAnimationFrame(() => r())); // let the loading screen repaint between heavy steps
 veil(0.12, 'Mapping the sky'); await paint();
-const sky = createSky(renderer); scene.add(sky.mesh);
+const sky = await createSky(renderer, paint); scene.add(sky.mesh);
 veil(0.3, 'Igniting stars'); await paint();
 const stars = createStars(); scene.add(stars);
 const dust = createDust(); scene.add(dust);
@@ -99,6 +99,7 @@ function renderCard(n) {
   requestAnimationFrame(measure);
 }
 
+const edgeKey = { f: undefined, h: undefined };
 function activeEdges() {
   const set = new Set();
   if (state.focus) { for (const n of path(state.focus)) if (n.edge !== undefined) set.add(n.edge); for (const c of childrenOf(state.focus)) set.add(c.edge); }
@@ -219,7 +220,13 @@ function pick(x, y) {
   return best;
 }
 const NEUTRAL = new THREE.Color(1, 1, 1), skyTint = new THREE.Color(1, 1, 1); let skyAmt = 0;
-const placed = [], obstacles = [], byDepth = [...NODES];
+const placed = [], obstacles = [], byDepth = [...NODES]; // pooled per-frame layout records
+const ANCHORS = ['below', 'above', 'right', 'left'], CAND_X = new Float64Array(4), CAND_T = new Float64Array(4);
+const rank = n => (n.id === state.hover ? -1e6 : 0) + n.depth * 1e4 + n.sz, byRank = (a, b) => rank(a) - rank(b);
+const ret = { on: false }; let pointing = false; // last values written to the reticle / canvas cursor
+// The reticle's ring spins forever in CSS; while the reticle is hidden that still made the browser produce frames
+// (measured ~30 ms CPU/s with the scene idle), so it only runs while shown.
+const retSvg = reticle.querySelector('svg'); retSvg.style.animationPlayState = 'paused';
 let hudTop = 84, hudBottom = 64, cardEdge = 1e9;
 function measure() {
   for (const n of NODES) { n.lw = n.label.offsetWidth || 150; n.lh = n.label.offsetHeight || 40; }
@@ -243,12 +250,32 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
 
 // ---------- frame ----------
 let last = performance.now(), ema = 16, frames = 0;
+// Adaptive resolution state. The target is 60 fps (or the display's rate if slower: the shortest recent frame
+// interval, clamped to 16-20 ms). The old recovery test was a fixed "< 14 ms", which a 60 Hz display never reports
+// under vsync, so the resolution never came back after one heavy view. Drops still start at 25 ms as before.
+let vMin = 1e9, vMinPrev = 1e9, probeWait = 1, okChecks = 0, lastProbe = -1e9;
+function adapt(rawMs) {
+  if (rawMs > 250) return; // tab was hidden / a one-off stall: not a measure of rendering cost
+  vMin = Math.min(vMin, rawMs); if (frames % 240 === 0) { vMinPrev = vMin; vMin = 1e9; }
+  if (frames <= 30) return;
+  ema += (rawMs - ema) * 0.05;
+  if (frames % 45) return;
+  const vs = THREE.MathUtils.clamp(Math.min(vMin, vMinPrev), 16.67, 20);
+  let want = dpr;
+  if (ema > vs * 1.5 && dpr > 0.7) { // missing frames (> 25 ms at 60 Hz and above, as before): drop
+    want = dpr * 0.85; okChecks = 0;
+    if (frames - lastProbe < 45 * 3) probeWait = Math.min(probeWait * 2, 64); // the last step up was too far: wait longer next time
+  } else if (ema < vs * 1.15 && dpr < maxDpr) { // holding the refresh rate: try a little more, after probeWait calm checks
+    if (frames - lastProbe === 45 * 3) probeWait = Math.max(1, probeWait / 2); // the last step up held: speed up again
+    if (++okChecks >= probeWait) { want = Math.min(maxDpr, dpr * 1.08); okChecks = 0; lastProbe = frames; }
+  } else okChecks = 0;
+  if (want !== dpr) { dpr = want; resize(); }
+}
 function frame(now) {
   const rawDt = (now - last) / 1000; last = now; const dt = Math.min(0.05, rawDt);
   if (!state.frozen) state.time += dt; const time = state.time;
   frames++;
-  // adaptive resolution: hold 60fps on weak GPUs
-  if (!q.has('dpr') && frames > 30) { ema += (rawDt * 1000 - ema) * 0.05; if (frames % 45 === 0) { const want = ema > 25 && dpr > 0.7 ? dpr * 0.85 : ema < 14 && dpr < maxDpr ? Math.min(maxDpr, dpr * 1.08) : dpr; if (want !== dpr) { dpr = want; resize(); } } }
+  if (!q.has('dpr')) adapt(rawDt * 1000);
 
   state.shift.lerp(state.shiftGoal, Math.min(1, dt * 2.2)); applyShift(false);
   rig.update(dt);
@@ -273,22 +300,23 @@ function frame(now) {
   stars.position.copy(camera.position); stars.material.uniforms.uTime.value = time; stars.material.uniforms.uPx.value = dpr * Math.max(1, H / 900);
   dust.material.uniforms.uTime.value = time; dust.material.uniforms.uScale.value = pxH / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
   if (ambient) ambient.update(time, dt, camera, pxH);
-  activeEdges(); edges.update(time, dt, camera, pxH); chart.update(dust.material.uniforms.uScale.value);
+  if (state.focus !== edgeKey.f || state.hover !== edgeKey.h) { edgeKey.f = state.focus; edgeKey.h = state.hover; activeEdges(); } // only on change
+  edges.update(time, dt, camera, pxH); chart.update(dust.material.uniforms.uScale.value);
 
   if (state.mode !== 'page') post.render(time);
 
-  // overlays
+  // overlays. Same layout rules as before, written to allocate nothing per frame and to touch the DOM only when a
+  // value actually changes (most frames nothing does once the camera settles).
   for (const n of NODES) project(n);
   const hoverId = state.mode === 'space' && !rig.dragging && pointers.size === 0 ? pick(ptr.x, ptr.y) : null;
   if (ptr.x > -1e3) state.hover = hoverId;
-  canvas.classList.toggle('pointing', !!hoverId);
+  if (pointing !== !!hoverId) { pointing = !!hoverId; canvas.classList.toggle('pointing', pointing); }
   const f = state.focus && byId[state.focus];
   const fr = f ? Math.min(f.sr * (f.inst.radius || 1) / f.pickR, H * 0.42) * 1.1 : 0;
-  placed.length = 0; obstacles.length = 0;
-  for (const n of NODES) if (n.sz > 0.05) obstacles.push({ id: n.id, x: n.sx, y: n.sy, r: f && n.id === f.id ? fr : Math.max(10, Math.min(n.sr, 150)) });
-  const hitsCircle = (x0, y0, x1, y1, c) => { const dx = Math.max(x0 - c.x, 0, c.x - x1), dy = Math.max(y0 - c.y, 0, c.y - y1); return dx * dx + dy * dy < c.r * c.r; };
-  const rank = n => (n.id === state.hover ? -1e6 : 0) + n.depth * 1e4 + n.sz;
-  for (const n of byDepth.sort((a, b) => rank(a) - rank(b))) {
+  const isWide = wide();
+  let nPlaced = 0, nObs = 0;
+  for (const n of NODES) if (n.sz > 0.05) { const o = obstacles[nObs++] || (obstacles[nObs - 1] = {}); o.id = n.id; o.x = n.sx; o.y = n.sy; o.r = f && n.id === f.id ? fr : Math.max(10, Math.min(n.sr, 150)); }
+  for (const n of byDepth.sort(byRank)) {
     let a = 0;
     if (state.mode === 'space' && n.sz > 0.05) {
       if (n.depth === 2) a = childVisible(n) ? 0.95 : 0; else a = f ? 0.34 : 1;
@@ -300,39 +328,48 @@ function frame(now) {
     const lw = n.lw || 150, lh = n.lh || 40, r = Math.max(10, Math.min(n.sr, 150));
     let x = n.sx, y = n.sy + r + 10, anchor = 'below';
     if (a > 0) {
-      const cands = [['below', n.sx, n.sy + r + 10], ['above', n.sx, n.sy - r - 10 - lh], ['right', n.sx + r + 14 + lw / 2, n.sy - lh / 2], ['left', n.sx - r - 14 - lw / 2, n.sy - lh / 2]];
-      if (n.anchor && n.anchor !== 'below') cands.sort((p, q) => (q[0] === n.anchor) - (p[0] === n.anchor)); // hysteresis
+      const cx = CAND_X, ct = CAND_T;
+      cx[0] = n.sx; ct[0] = n.sy + r + 10; cx[1] = n.sx; ct[1] = n.sy - r - 10 - lh;
+      cx[2] = n.sx + r + 14 + lw / 2; ct[2] = n.sy - lh / 2; cx[3] = n.sx - r - 14 - lw / 2; ct[3] = n.sy - lh / 2;
+      const pref = n.anchor && n.anchor !== 'below' ? ANCHORS.indexOf(n.anchor) : -1; // hysteresis: last anchor first
       let ok = false;
-      for (const [name, cx, top] of cands) {
-        const x0 = cx - lw / 2, x1 = cx + lw / 2, y0 = top, y1 = top + lh;
+      for (let k = -1; k < 4 && !ok; k++) {
+        const c = k < 0 ? pref : k; if (c < 0 || (k >= 0 && c === pref)) continue;
+        const x0 = cx[c] - lw / 2, x1 = cx[c] + lw / 2, y0 = ct[c], y1 = ct[c] + lh;
         if (x0 < 8 || x1 > W - 8 || y0 < hudTop || y1 > H - hudBottom) continue;
-        if (f && (wide() ? x1 > cardEdge : y1 > cardEdge)) continue;
-        if (placed.some(b => x0 < b.x1 + 6 && x1 > b.x0 - 6 && y0 < b.y1 + 4 && y1 > b.y0 - 4)) continue;
-        if (obstacles.some(c => c.id !== n.id && hitsCircle(x0, y0, x1, y1, c))) continue;
-        x = cx; y = top; anchor = name; ok = true; placed.push({ x0, x1, y0, y1 }); break;
+        if (f && (isWide ? x1 > cardEdge : y1 > cardEdge)) continue;
+        let hit = false;
+        for (let i = 0; i < nPlaced && !hit; i++) { const b = placed[i]; hit = x0 < b.x1 + 6 && x1 > b.x0 - 6 && y0 < b.y1 + 4 && y1 > b.y0 - 4; }
+        for (let i = 0; i < nObs && !hit; i++) { const o = obstacles[i]; if (o.id !== n.id) { const dx = Math.max(x0 - o.x, 0, o.x - x1), dy = Math.max(y0 - o.y, 0, o.y - y1); hit = dx * dx + dy * dy < o.r * o.r; } }
+        if (hit) continue;
+        x = cx[c]; y = ct[c]; anchor = ANCHORS[c]; ok = true;
+        const b = placed[nPlaced++] || (placed[nPlaced - 1] = {}); b.x0 = x0; b.x1 = x1; b.y0 = y0; b.y1 = y1;
       }
       if (!ok) a = 0;
     }
     if (rig.flight) a *= rig.flight.kind === 'arc' || rig.flight.kind === 'spiral' ? THREE.MathUtils.smoothstep(rig.flight.t, 0.8, 1) : 0;
     n.labelA += (a - n.labelA) * Math.min(1, dt * (a > n.labelA ? 3 : 9));
     const s = n.label.style;
-    if (n.labelA < 0.01) { if (s.opacity !== '0') s.opacity = '0'; n.lx = undefined; continue; }
-    s.opacity = n.labelA.toFixed(3);
+    if (n.labelA < 0.01) { if (n.op !== '0') s.opacity = n.op = '0'; n.lx = undefined; continue; }
+    const op = n.labelA.toFixed(3); if (op !== n.op) s.opacity = n.op = op;
     if (a > 0) { if (n.anchor !== anchor) { n.anchor = anchor; n.label.dataset.anchor = anchor; } n.tx = x; n.ty = y; }
     if (n.lx === undefined) { n.lx = n.tx ?? x; n.ly = n.ty ?? y; }
     n.lx += ((n.tx ?? x) - n.lx) * Math.min(1, dt * 12); n.ly += ((n.ty ?? y) - n.ly) * Math.min(1, dt * 12);
-    s.transform = `translate3d(${n.lx.toFixed(1)}px,${n.ly.toFixed(1)}px,0) translateX(-50%)`;
-    n.label.classList.toggle('hot', n.id === state.hover);
+    const qx = Math.round(n.lx * 10), qy = Math.round(n.ly * 10);
+    if (qx !== n.qx || qy !== n.qy) { n.qx = qx; n.qy = qy; s.transform = `translate3d(${n.lx.toFixed(1)}px,${n.ly.toFixed(1)}px,0) translateX(-50%)`; }
+    const hot = n.id === state.hover; if (hot !== n.hot) { n.hot = hot; n.label.classList.toggle('hot', hot); }
   }
   const h = state.hover && byId[state.hover];
   if (h && state.mode === 'space') {
-    const size = Math.max(52, Math.min(h.sr, 170) * 2 + 26);
-    reticle.style.width = reticle.style.height = size + 'px';
-    reticle.style.transform = `translate3d(${(h.sx - size / 2).toFixed(1)}px,${(h.sy - size / 2).toFixed(1)}px,0)`;
-    reticle.style.setProperty('--c', h.color); reticle.lastElementChild.textContent = h.id === state.focus ? (h.href ? 'Open' : 'Enter') : 'Focus';
+    const size = Math.max(52, Math.min(h.sr, 170) * 2 + 26), rs = reticle.style;
+    const sz = size + 'px', tf = `translate3d(${(h.sx - size / 2).toFixed(1)}px,${(h.sy - size / 2).toFixed(1)}px,0)`, txt = h.id === state.focus ? (h.href ? 'Open' : 'Enter') : 'Focus';
+    if (sz !== ret.sz) { rs.width = rs.height = ret.sz = sz; }
+    if (tf !== ret.tf) rs.transform = ret.tf = tf;
+    if (h.color !== ret.c) rs.setProperty('--c', ret.c = h.color);
+    if (txt !== ret.txt) reticle.lastElementChild.textContent = ret.txt = txt;
     if (reticle.dataset.id !== h.id) { reticle.dataset.id = h.id; reticle.classList.remove('lock'); void reticle.offsetWidth; reticle.classList.add('lock'); }
-    reticle.classList.add('on');
-  } else { reticle.classList.remove('on'); reticle.dataset.id = ''; }
+    if (!ret.on) { ret.on = true; reticle.classList.add('on'); retSvg.style.animationPlayState = 'running'; }
+  } else if (ret.on || reticle.dataset.id) { ret.on = false; reticle.classList.remove('on'); reticle.dataset.id = ''; retSvg.style.animationPlayState = 'paused'; }
 
   if (rig.flight || frames % 6 === 0) {
     _v.copy(camera.position).sub(rig.look); const d = _v.length();
@@ -355,12 +392,20 @@ if (q.get('intro') === '0' || reduced) {
   rig.flyTo(OV_T.clone(), overview(), 5.5, { kind: 'spiral', onDone: () => { if (byId[startId]) focus(startId, { silent: true }); } });
 }
 if (q.has('still')) rig.auto = 0;
-window.__astral = { focus, enter, leave, rig, state, NODES };
+window.__astral = { focus, enter, leave, rig, state, NODES, renderer, scene, camera, post }; // debug handle (dev scripts)
 // Compile shaders and draw once behind the loading screen, then open it (it stays up long enough to be seen).
 veil(0.92, 'Warming up'); await paint();
 for (const n of NODES) n.inst.update(state.time, 0.016, camera);
+// Compile every scene program without blocking the main thread (KHR_parallel_shader_compile where available) so the
+// loading screen keeps moving. Programs are keyed by the target they draw into (tone mapping / colour space), so
+// compile against the composer target the scene actually renders to; the first render below then reuses them.
+try { renderer.setRenderTarget(post.composer.readBuffer); await renderer.compileAsync(scene, camera); } catch (e) { /* compiled on first use */ }
+renderer.setRenderTarget(null);
 post.render(state.time);
 veil(1, 'Ready'); await paint();
 const held = performance.now() - (window.__veilStart || performance.now());
 if (q.get('intro') !== '0' && !reduced && held < 2400) await new Promise(r => setTimeout(r, 2400 - held));
 requestAnimationFrame(now => { last = now; body.classList.remove('booting'); body.classList.add('opened'); frame(now); });
+// Once its fade-out is over (CSS: visibility after 1.75 s), take the loading screen out of rendering: hidden, its
+// infinite CSS animations (orbits, drop-shadows, sheen) kept costing ~45 ms CPU/s for the life of the page.
+setTimeout(() => { const v = $('#veil'); if (v) v.style.display = 'none'; }, 2600);

@@ -35,16 +35,19 @@ float field(vec3 p, float t, out float dust, out float shade){
   vec3 w=p;
   w+=0.20*sin(w.yzx*1.7+vec3(1.3,2.1,0.4)*t+uSeed);
   w+=0.09*sin(w.zxy*3.3-vec3(0.7,1.1,1.6)*t+uSeed*1.7);
-  float lobe=0.0;
-  for(int i=0;i<${N_LOBES};i++){ vec3 d=w-uLobes[i].xyz; lobe+=exp(-dot(d,d)*uLobes[i].w); }
   vec3 q=w*1.2+vec3(0.0,t*0.3,uSeed);
   float n1=snoise(q);
+  // the envelope multiplies both gas and dust: where it is exactly 0 (the outer shell of the bounding sphere) the
+  // sample is empty, so skip the other noise octaves and the lobe sum (same result)
+  float env=smoothstep(uR,uR*0.45,length(p)*(1.0+0.3*n1));
+  if(env<=0.0){ dust=0.0; shade=0.0; return 0.0; }
+  float lobe=0.0;
+  for(int i=0;i<${N_LOBES};i++){ vec3 d=w-uLobes[i].xyz; lobe+=exp(-dot(d,d)*uLobes[i].w); }
   float n2=snoise(q*2.3+vec3(5.2,-t*0.45,1.7));
   float n=n1*0.62+n2*0.30;
   if(uDetail>0.01) n+=uDetail*0.14*snoise(q*5.1-vec3(t*0.5,0.0,3.1));
   float r=length(w);
   vec3 dir=w/max(r,1e-3);
-  float env=smoothstep(uR,uR*0.45,length(p)*(1.0+0.3*n1));
   float cav=smoothstep(0.18,0.75,r+0.2*n1);
   float g=lobe*(0.40+0.85*n);
   float soft=lobe*0.05*(1.0+n);
@@ -89,9 +92,16 @@ void main(){
   }
   vec3 col=vec3(0.0); float T=1.0;
   float t=t0+dt*jit;
+  // Each embedded star is composited once, at the step whose sample interval [t-dt/2, t+dt/2] holds its closest
+  // approach, weighted by the transmittance in front of that step. Testing all ${N_STARS} stars at every step cost
+  // about a quarter of the shader, so record the transmittance per step and add the stars after the march (same sum).
+  float Tk[${STEPS}]; int kEnd=${STEPS};
   for(int k=0;k<${STEPS};k++){
+    Tk[k]=T;
     vec3 p=ro+rd*t;
     float dust, shade; float g=field(p,tt,dust,shade)*uGas; dust*=uDust;
+    float sig=g*2.0+dust*4.5;
+    if(g!=0.0||dust!=0.0){ // else an empty sample: no emission, no absorption (the stars still composite)
     // lighting from embedded stars
     float Isum=0.0; float Icen=0.0;
     float Iloc=0.0;
@@ -103,16 +113,17 @@ void main(){
     vec3 em=g*(gasC*Isum*(0.55+0.9*max(shade+0.3,0.0))+(uColH*0.4+uColV*0.22)*(1.0-0.75*ion));
     em+=(g+dust*0.7)*uColD*Iloc*1.6;
     em+=dust*(uColD*smoothstep(1.2,6.0,Isum)*1.2+uColV*0.05);
-    float sig=g*2.0+dust*4.5;
     float a=exp(-sig*dt);
     // energy-correct integration of emission over the step
     col+=T*em*(1.0-a)/max(sig,1e-4);
-    // stars whose closest point falls in this step
-    for(int i=0;i<${N_STARS};i++){ float w=step(t-dt*0.5,sT[i])*step(sT[i],t+dt*0.5); col+=T*sG[i]*w; }
     T*=a;
+    }
     t+=dt;
-    if(T<0.02) break;
+    if(T<0.02){ kEnd=k+1; break; }
   }
+  // stars whose closest point falls inside one of the steps that were marched
+  float tA=t0+dt*jit;
+  for(int i=0;i<${N_STARS};i++){ float kf=floor((sT[i]-tA)/dt+0.5); if(kf>=0.0 && kf<float(kEnd)) col+=Tk[int(kf)]*sG[i]; }
   // any star in front of the first sample / behind the last
   for(int i=0;i<${N_STARS};i++){ if(sT[i]<t0+dt*(jit-0.5)) col+=sG[i]; }
   col*=uInt*1.05;
@@ -210,7 +221,10 @@ export function create(opts = {}) {
     blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
     blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
   });
-  const vol = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32), volMat);
+  // The mesh only supplies one back-face fragment per covered pixel (the ray-sphere test uses uR), so a coarse sphere
+  // scaled to circumscribe the true one (faces >= 0.9866 x vertex radius for 24x16) covers exactly the same pixels with
+  // a quarter of the triangles (was 48x32).
+  const vol = new THREE.Mesh(new THREE.SphereGeometry(R * 1.02, 24, 16), volMat);
   vol.renderOrder = 1;
   const tmpSize = new THREE.Vector2();
   vol.onBeforeRender = (renderer, scene, cam) => {

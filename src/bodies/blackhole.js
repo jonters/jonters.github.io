@@ -51,10 +51,13 @@ float layer(float r,float ang,float cyc,float lod){
   float n1=vn(vec2(u*9.0,r*0.7),9.0,o);
   float rw=r+(n1-0.5)*0.9;
   float n2=vn(vec2(u*26.0,rw*2.6),26.0,o+311.0);
-  float n3=vn(vec2(u*70.0,rw*7.0+n2*0.8),70.0,o+733.0);
-  float n4=vn(vec2(u*170.0,rw*17.0+n3*0.7),170.0,o+977.0);
-  float f3=1.0-abs(2.0*n3-1.0); float f4=1.0-abs(2.0*n4-1.0);
-  float d=0.35+1.0*n1*n2+0.45*lod*f3*f3+0.25*lod*lod*f4*f4;
+  float d=0.35+1.0*n1*n2;
+  if(lod>0.0){ // the two fine octaves are weighted by lod: when the hole is small on screen (lod = 0) skip them
+    float n3=vn(vec2(u*70.0,rw*7.0+n2*0.8),70.0,o+733.0);
+    float n4=vn(vec2(u*170.0,rw*17.0+n3*0.7),170.0,o+977.0);
+    float f3=1.0-abs(2.0*n3-1.0); float f4=1.0-abs(2.0*n4-1.0);
+    d+=0.45*lod*f3*f3; d+=0.25*lod*lod*f4*f4;
+  }
   d*=0.7+0.6*n2;
   return d;
 }
@@ -206,7 +209,12 @@ void main(){
   float D=length(c.xyz); float rs=uShadow*s, rb=uRb*s;
   float sn=min(rs/max(D,1e-4),0.999); float L=D+rb;
   float size=L*sn/sqrt(1.0-sn*sn)*0.93*step(rs*1.15,D);
-  c.xyz*=L/D; c.xy+=position.xy*size;
+  // the disc faces the camera (perpendicular to the line of sight, not to the view axis): then every ray through it
+  // meets it at distance >= L = D+rb, i.e. behind the tracing volume's back faces. Squared to the view axis it cut in
+  // front of them whenever the hole was off-centre, the tracer failed the depth test there and whatever was drawn
+  // before it (e.g. the sun's corona) showed as a bright wedge inside the shadow.
+  vec3 w=c.xyz/max(D,1e-4); vec3 u=normalize(cross(w,abs(w.y)<0.99?vec3(0.0,1.0,0.0):vec3(1.0,0.0,0.0))); vec3 v=cross(u,w);
+  c.xyz*=L/D; c.xyz+=(u*position.x+v*position.y)*size;
   gl_Position=projectionMatrix*c;
 }`;
 const occFrag = /* glsl */ `varying vec2 vP; void main(){ if(dot(vP,vP)>1.0) discard; gl_FragColor=vec4(0.0,0.0,0.0,1.0); }`;
@@ -243,7 +251,11 @@ export function create(opts = {}) {
   const group = new THREE.Group();
   const Rs = 0.34 * o.size;
   const Rb = 11.0; // tracing volume, in Rs
-  const trace = new THREE.Mesh(new THREE.SphereGeometry(Rb * Rs, 64, 40), new THREE.ShaderMaterial({
+  // The tracing volume's mesh only has to produce one back-face fragment per covered pixel: the shader rebuilds the
+  // camera ray from it and intersects the true sphere analytically. 24x16 (was 64x40) is inscribed to within 1.4%,
+  // and rays beyond b = uRout+0.3 (97% of Rb) are discarded anyway, so the image is identical with ~7x fewer triangles,
+  // which matters when the hole is small on screen (tiny triangles shade whole 2x2 quads each).
+  const trace = new THREE.Mesh(new THREE.SphereGeometry(Rb * Rs, 24, 16), new THREE.ShaderMaterial({
     uniforms: {
       uExpo: { value: 1 }, uTime: { value: 0 }, uRs: { value: Rs }, uRb: { value: Rb }, uRin: { value: 3.0 }, uRout: { value: 10.4 },
       uSpin: { value: o.spin }, uBeam: { value: o.beaming }, uIntensity: { value: o.intensity },

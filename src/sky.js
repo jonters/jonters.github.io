@@ -48,13 +48,23 @@ void main(){
   gl_FragColor=vec4(f*0.9+0.5,1.0);
 }`;
 
-function bakeCube(renderer, fragmentShader, size, type) {
+// Bakes one face at a time, calling `between()` (e.g. wait a frame) after each when given, so the 1024px nebula bake
+// is six short GPU jobs instead of one long one and the loading screen keeps animating. Same render as CubeCamera.update.
+async function bakeCube(renderer, fragmentShader, size, type, between) {
   const rt = new THREE.WebGLCubeRenderTarget(size, { type, generateMipmaps: false });
   const s = new THREE.Scene();
-  s.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), new THREE.ShaderMaterial({ side: THREE.BackSide, uniforms: { uBand: { value: BAND } }, vertexShader: bakeVert, fragmentShader })));
-  const tm = renderer.toneMapping; renderer.toneMapping = THREE.NoToneMapping;
-  new THREE.CubeCamera(0.1, 100, rt).update(renderer, s);
-  renderer.toneMapping = tm;
+  const geo = new THREE.SphereGeometry(10, 32, 16), mat = new THREE.ShaderMaterial({ side: THREE.BackSide, uniforms: { uBand: { value: BAND } }, vertexShader: bakeVert, fragmentShader });
+  s.add(new THREE.Mesh(geo, mat));
+  const cam = new THREE.CubeCamera(0.1, 100, rt);
+  cam.updateMatrixWorld();
+  if (cam.coordinateSystem !== renderer.coordinateSystem) { cam.coordinateSystem = renderer.coordinateSystem; cam.updateCoordinateSystem(); }
+  for (let face = 0; face < 6; face++) {
+    const tm = renderer.toneMapping; renderer.toneMapping = THREE.NoToneMapping;
+    renderer.setRenderTarget(rt, face); renderer.render(s, cam.children[face]); renderer.setRenderTarget(null);
+    renderer.toneMapping = tm;
+    if (between) await between();
+  }
+  geo.dispose(); mat.dispose(); // the bake scene is never drawn again
   return rt.texture;
 }
 
@@ -82,9 +92,11 @@ void main(){
   gl_FragColor=vec4(col*breathe*uFade,1.0);
 }`;
 
-export function createSky(renderer) {
+// async: pass `between` (a promise-returning frame wait) to spread the bake over frames.
+export async function createSky(renderer, between) {
+  const tNebula = await bakeCube(renderer, nebulaFrag, 1024, THREE.HalfFloatType, between), tFlow = await bakeCube(renderer, flowFrag, 128, THREE.UnsignedByteType);
   const mat = new THREE.ShaderMaterial({ side: THREE.BackSide, depthTest: false, depthWrite: false,
-    uniforms: { tNebula: { value: bakeCube(renderer, nebulaFrag, 1024, THREE.HalfFloatType) }, tFlow: { value: bakeCube(renderer, flowFrag, 128, THREE.UnsignedByteType) }, uTime: { value: 0 }, uFade: { value: 1 }, uTint: { value: new THREE.Color(1, 1, 1) }, uTintAmt: { value: 0 }, uResY: { value: 1 } },
+    uniforms: { tNebula: { value: tNebula }, tFlow: { value: tFlow }, uTime: { value: 0 }, uFade: { value: 1 }, uTint: { value: new THREE.Color(1, 1, 1) }, uTintAmt: { value: 0 }, uResY: { value: 1 } },
     vertexShader: `varying vec3 vDir; void main(){ vDir=position; vec4 mv=viewMatrix*vec4(position,0.0); gl_Position=projectionMatrix*vec4(mv.xyz,1.0); }`,
     fragmentShader: skyFrag });
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), mat);
