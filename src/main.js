@@ -86,7 +86,6 @@ const kicker = n => { const no = String(NODES.indexOf(n)).padStart(2, '0'); retu
 
 function renderCard(n) {
   card.classList.toggle('minor', n.depth === 2);
-  card.querySelector('.kicker').textContent = kicker(n);
   const kids = childrenOf(n.id).length, dist = n.p.length();
   const az = (Math.atan2(n.p.x, n.p.z) + 2 * Math.PI) % (2 * Math.PI) / (2 * Math.PI) * 24, dec = dist ? Math.asin(n.p.y / dist) * 180 / Math.PI : 0;
   const rows = [['Cat', `JL-${String(NODES.indexOf(n)).padStart(2, '0')}`], ['Pos', dist ? `${String(Math.floor(az)).padStart(2, '0')}h ${String(Math.floor(az % 1 * 60)).padStart(2, '0')}m  ${dec >= 0 ? '+' : '−'}${Math.abs(dec).toFixed(1)}°` : 'centre'], ['Dist', `${dist.toFixed(1)} AU`], ['Bodies', String(kids || '—')]];
